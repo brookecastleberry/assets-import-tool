@@ -9,6 +9,8 @@
 #5. Run step 4 of api import tool or Script to create targets json and grab data from fields in csv file 
 #6. Run last step of api import tool to load in targets to proper application organizations 
 
+#look at get all assets API
+
 
 #Architecture for Additional Updates
 #automatically identify & import new repos --> slack notification or email notification 
