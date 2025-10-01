@@ -1,0 +1,24 @@
+{
+  "orgs": [
+    {
+      "name": "ASN2",
+      "groupId": "bb08952b-838b-4f60-aae9-45c35b90ecb0",
+      "sourceOrgId": "73af945a-f850-4b22-a870-8e20b5c636a0"
+    },
+    {
+      "name": "ASN3",
+      "groupId": "bb08952b-838b-4f60-aae9-45c35b90ecb0",
+      "sourceOrgId": "73af945a-f850-4b22-a870-8e20b5c636a0"
+    },
+    {
+      "name": "ASN4",
+      "groupId": "bb08952b-838b-4f60-aae9-45c35b90ecb0",
+      "sourceOrgId": "73af945a-f850-4b22-a870-8e20b5c636a0"
+    },
+    {
+      "name": "ASN5",
+      "groupId": "bb08952b-838b-4f60-aae9-45c35b90ecb0",
+      "sourceOrgId": "73af945a-f850-4b22-a870-8e20b5c636a0"
+    }
+  ]
+}

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Snyk Targets Creator - Phase 2
 
@@ -9,7 +8,6 @@ and automatically detecting the appropriate integration types.
 import json
 import csv
 import io
-import requests
 from typing import Dict, List, Optional
 import argparse
 import sys
@@ -24,70 +22,62 @@ except ImportError:
 
 
 class SnykTargetMapper:
-    def __init__(self, snyk_token: str, group_id: str):
-        self.snyk_token = snyk_token
+    def __init__(self, group_id: str, orgs_json_file: str = "snyk-created-orgs.json"):
         self.group_id = group_id
-        self.base_url = "https://api.snyk.io"
-        self.headers = {
-            "Authorization": snyk_token,
-            "Accept": "*/*"
-        }
+        self.orgs_json_file = orgs_json_file
+        self.org_data = None
+    
+    def load_organizations_from_json(self) -> None:
+        """
+        Load organization data from snyk-created-orgs.json file
+        """
+        try:
+            with open(self.orgs_json_file, 'r') as f:
+                data = json.load(f)
+                self.org_data = data.get('orgData', [])
+                print(f"Loaded {len(self.org_data)} organizations from {self.orgs_json_file}")
+        except FileNotFoundError:
+            print(f"Error: {self.orgs_json_file} file not found")
+            self.org_data = []
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON file {self.orgs_json_file}: {e}")
+            self.org_data = []
     
     def get_organizations_from_group(self) -> List[Dict]:
         """
-        Fetch all organizations from a Snyk group using the API
-        GET /rest/groups/{group_id}/orgs
+        Get organizations from the loaded JSON file
         """
-        url = f"{self.base_url}/rest/groups/{self.group_id}/orgs?version=2024-06-21"
+        if self.org_data is None:
+            self.load_organizations_from_json()
+            
+        # Extract relevant information in the expected format
+        org_info = []
+        for org in self.org_data:
+            org_info.append({
+                'id': org.get('id'),
+                'name': org.get('name'),
+                'display_name': org.get('name'),  # Use name as display_name
+                'slug': org.get('slug')
+            })
         
-        try:
-            response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            # REST API returns data in 'data' field
-            orgs = data.get('data', [])
-            
-            print(f"Found {len(orgs)} organizations in group {self.group_id}")
-            
-            # Extract relevant information
-            org_info = []
-            for org in orgs:
-                # REST API response structure
-                attributes = org.get('attributes', {})
-                org_info.append({
-                    'id': org.get('id'),
-                    'name': attributes.get('name'),
-                    'display_name': attributes.get('display_name', attributes.get('name')),
-                    'slug': attributes.get('slug')
-                })
-            
-            return org_info
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching organizations: {e}")
-            return []
+        print(f"Found {len(org_info)} organizations in group {self.group_id}")
+        return org_info
     
-    def get_integrations_for_org(self, org_id: str) -> List[Dict]:
+    def get_integrations_for_org(self, org_id: str) -> Dict[str, str]:
         """
-        Fetch integrations for a specific organization
-        GET /v1/org/{orgId}/integrations
+        Get integrations for a specific organization from loaded JSON data
         """
-        url = f"{self.base_url}/v1/org/{org_id}/integrations"
-        
-        try:
-            response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
+        if self.org_data is None:
+            self.load_organizations_from_json()
             
-            data = response.json()
-            integrations = data.get('integrations', [])
-            
-            print(f"Found {len(integrations)} integrations for org {org_id}")
-            return integrations
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching integrations for org {org_id}: {e}")
-            return []
+        for org in self.org_data:
+            if org.get('id') == org_id:
+                integrations = org.get('integrations', {})
+                print(f"Found {len(integrations)} integrations for org {org_id}")
+                return integrations
+                
+        print(f"No organization found with ID {org_id}")
+        return {}
     
     def find_integration_id(self, org_id: str, integration_type: str) -> Optional[str]:
         """
@@ -95,7 +85,7 @@ class SnykTargetMapper:
         """
         integrations = self.get_integrations_for_org(org_id)
         
-        # Map common integration type names to what Snyk API returns
+        # Map common integration type names to what's stored in the JSON
         integration_mapping = {
             'github': 'github',
             'gitlab': 'gitlab',
@@ -107,10 +97,13 @@ class SnykTargetMapper:
         
         target_type = integration_mapping.get(integration_type.lower(), integration_type.lower())
         
-        for integration in integrations:
-            if integration.get('type', '').lower() == target_type:
-                return integration.get('id')
+        # Look up the integration ID directly from the integrations dict
+        integration_id = integrations.get(target_type)
+        if integration_id:
+            return integration_id
         
+        print(f"No integration of type '{target_type}' found for org {org_id}")
+        print(f"Available integrations: {list(integrations.keys())}")
         return None
     
     def read_applications_from_csv(self, csv_file_path: str) -> List[Dict]:
@@ -121,52 +114,46 @@ class SnykTargetMapper:
         
         try:
             if PANDAS_AVAILABLE:
-                try:
-                    # Try reading normally first
-                    df = pd.read_csv(csv_file_path)
-                    
-                    # Check if 'Application' is in columns, if not, try skipping first row
-                    if 'Application' not in df.columns:
-                        print("Application column not found, trying to skip header row...")
-                        try:
-                            df = pd.read_csv(csv_file_path, skiprows=1)
-                        except Exception as e:
-                            print(f"Error reading CSV with skiprows=1: {e}")
-                            return []
-                    
-                    if 'Application' not in df.columns:
-                        print("Error: 'Application' column not found in CSV")
-                        print(f"Available columns: {list(df.columns)}")
-                        return []
-                    
-                    # Process each row
-                    for index, row in df.iterrows():
-                        app_name = str(row.get("Application", "")).strip()
-                        if app_name and app_name.lower() not in ['nan', 'n/a', '']:
-                            # Handle multiple applications separated by commas
-                            app_names = [name.strip() for name in app_name.split(',') 
-                                        if name.strip() and name.strip().lower() not in ['n/a', 'nan']]
-                            
-                            for single_app in app_names:
-                                applications.append({
-                                    'application_name': single_app,
-                                    'asset_type': str(row.get("Type", "")),
-                                    'asset_name': str(row.get("Asset", "")),
-                                    'repository_url': str(row.get("Repository URL", "")),
-                                    'asset_source': str(row.get("Asset Source", "")),
-                                    'gitlab_project_id': str(row.get("Gitlab Project ID", "")),
-                                    'branch': str(row.get("Branch", "")),
-                                    'exclusion_globs': str(row.get("exclusionGlobs", "")),
-                                    'files': str(row.get("Files", "")),
-                                    'row_index': index
-                                })
+                # Try reading normally first
+                df = pd.read_csv(csv_file_path)
                 
-                except ImportError:
-                    # Fallback to basic CSV parsing
-                    PANDAS_AVAILABLE = False
-            
-            if not PANDAS_AVAILABLE:
-                # Fallback to basic CSV parsing
+                # Check if 'Application' is in columns, if not, try skipping first row
+                if 'Application' not in df.columns:
+                    print("Application column not found, trying to skip header row...")
+                    try:
+                        df = pd.read_csv(csv_file_path, skiprows=1)
+                    except Exception as e:
+                        print(f"Error reading CSV with skiprows=1: {e}")
+                        return []
+                
+                if 'Application' not in df.columns:
+                    print("Error: 'Application' column not found in CSV")
+                    print(f"Available columns: {list(df.columns)}")
+                    return []
+                
+                # Process each row
+                for index, row in df.iterrows():
+                    app_name = str(row.get("Application", "")).strip()
+                    if app_name and app_name.lower() not in ['nan', 'n/a', '']:
+                        # Handle multiple applications separated by commas
+                        app_names = [name.strip() for name in app_name.split(',') 
+                                    if name.strip() and name.strip().lower() not in ['n/a', 'nan']]
+                        
+                        for single_app in app_names:
+                            applications.append({
+                                'application_name': single_app,
+                                'asset_type': str(row.get("Type", "")),
+                                'asset_name': str(row.get("Asset", "")),
+                                'repository_url': str(row.get("Repository URL", "")),
+                                'asset_source': str(row.get("Asset Source", "")),
+                                'gitlab_project_id': str(row.get("Gitlab Project ID", "")),
+                                'branch': str(row.get("Branch", "")),
+                                'exclusion_globs': str(row.get("exclusionGlobs", "")),
+                                'files': str(row.get("Files", "")),
+                                'row_index': index
+                            })
+            else:
+                # Basic CSV parsing fallback
                 with open(csv_file_path, 'r', newline='', encoding='utf-8') as csvfile:
                     # Try to detect if we need to skip the first row
                     sample = csvfile.read(1024)
@@ -478,21 +465,25 @@ Examples:
   
   # Create targets file with multiple integration types
   python create_targets.py --group-id abc123 --csv-file mydata.csv --integration-type github,azure-repos
+  
+  # Specify custom organizations JSON file
+  python create_targets.py --group-id abc123 --csv-file mydata.csv --integration-type gitlab --orgs-json custom-orgs.json
         """
     )
     
     parser.add_argument('--group-id', required=True, help='Snyk Group ID')
     parser.add_argument('--csv-file', required=True, help='CSV file path')
     parser.add_argument('--integration-type', required=True, help='Integration types (comma-separated, e.g., github,azure-repos)')
+    parser.add_argument('--orgs-json', default='snyk-created-orgs.json', help='Path to organizations JSON file (default: snyk-created-orgs.json)')
     parser.add_argument('--output', help='Output JSON file path (default: import-targets.json)')
     
     args = parser.parse_args()
     
-    # Check for Snyk token
-    snyk_token = os.environ.get('SNYK_TOKEN')
-    if not snyk_token:
-        print("Error: SNYK_TOKEN environment variable is required")
-        print("Set it with: export SNYK_TOKEN='your-token-here'")
+    # Snyk token is no longer required since we're reading from JSON file
+    # Check if organizations JSON file exists
+    if not os.path.exists(args.orgs_json):
+        print(f"Error: {args.orgs_json} file not found")
+        print(f"Make sure the organizations JSON file exists at {args.orgs_json}")
         sys.exit(1)
     
     # Parse integration types from comma-separated string (now required)
@@ -505,7 +496,7 @@ Examples:
     else:
         output_path = args.output
     
-    mapper = SnykTargetMapper(snyk_token, args.group_id)
+    mapper = SnykTargetMapper(args.group_id, args.orgs_json)
     
     print(f"Creating targets file: {output_path}")
     mapper.create_targets_json(args.csv_file, output_path, integration_types)
