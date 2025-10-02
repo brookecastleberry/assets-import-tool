@@ -369,8 +369,7 @@ class SnykTargetMapper:
                 "integrationId": integration_id,
                 "target": {
                     "name": repo_name,
-                    "owner": owner,
-                    "remoteUrl": repository_url
+                    "owner": owner
                 }
             }
             
