@@ -1,1 +1,4 @@
 requests==2.31.0
+# Note: aiohttp is optional for advanced async features, but not required
+# The script uses ThreadPoolExecutor from concurrent.futures (built-in)
+# All async functionality is implemented with standard library components
