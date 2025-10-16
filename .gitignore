@@ -4,6 +4,9 @@
 # CSV data files
 *.csv
 
+# Shell scripts
+*.sh
+
 # Python
 __pycache__/
 *.py[cod]
