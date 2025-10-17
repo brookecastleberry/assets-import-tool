@@ -14,7 +14,7 @@ The import process follows a 4-step workflow:
 
 1. **Generate Organization Data**: Create Snyk organization structure from your CSV (`create_orgs.py`)
 2. **Create Organizations in Snyk**: Use `snyk-api-import` to create the organizations in Snyk
-3. **Generate Import Targets**: Create repository import targets with automatic SCM integration and application boundary enforcement (`create_targets_fixed.py`)
+3. **Generate Import Targets**: Create repository import targets with automatic SCM integration and application boundary enforcement (`create_targets.py`)
 4. **Import Repositories**: Use `snyk-api-import` to perform the actual repository imports into Snyk
 
 ## 📋 Prerequisites
@@ -34,16 +34,6 @@ export AZURE_DEVOPS_TOKEN="your_azure_devops_personal_access_token"
 export SNYK_TOKEN="your_snyk_token"
 export SNYK_LOG_PATH="/path/to/logs"
 # Example: mkdir -p "$HOME/snyk-logs" && export SNYK_LOG_PATH="$HOME/snyk-logs"
-```
-
-*GitHub App Authentication (for --source github-cloud-app):*
-```bash
-export GITHUB_APP_ID="your_app_id"
-export GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
-your-private-key-content-here
------END RSA PRIVATE KEY-----"
-# Optional: target specific installation
-export GITHUB_APP_INSTALLATION_ID="your_installation_id"
 ```
 
 ### Dependencies

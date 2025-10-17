@@ -13,6 +13,9 @@ import sys
 import os
 import logging
 from datetime import datetime
+from logging_utils import setup_logging
+from csv_utils import read_applications_from_csv
+from file_utils import sanitize_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_non_empty_string
 
 try:
     import pandas as pd
@@ -22,142 +25,29 @@ except ImportError:
     print("Warning: pandas not available, using basic CSV parsing")
 
 
-def setup_logging() -> logging.Logger:
-    """
-    Setup logging to file using SNYK_LOG_PATH environment variable
-    """
-    log_path = os.environ.get('SNYK_LOG_PATH')
-    if not log_path:
-        print("Warning: SNYK_LOG_PATH environment variable not set. Logs will only be displayed on console.")
-        # Create a console-only logger
-        logger = logging.getLogger('create_orgs')
-        logger.setLevel(logging.INFO)
-        if not logger.handlers:
-            console_handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            console_handler.setFormatter(formatter)
-            logger.addHandler(console_handler)
-        return logger
-    
-    # Ensure the log directory exists
-    os.makedirs(log_path, exist_ok=True)
-    
-    # Create log filename with timestamp
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_file = os.path.join(log_path, f'create_orgs_{timestamp}.log')
-    
-    # Setup logger
-    logger = logging.getLogger('create_orgs')
-    logger.setLevel(logging.INFO)
-    
-    # Avoid duplicate handlers
-    if not logger.handlers:
-        # File handler
-        file_handler = logging.FileHandler(log_file)
-        file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(file_formatter)
-        logger.addHandler(file_handler)
-        
-        # Console handler
-        console_handler = logging.StreamHandler()
-        console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        console_handler.setFormatter(console_formatter)
-        logger.addHandler(console_handler)
-    
-    print(f"📝 Logging to: {log_file}")
-    return logger
-
-
 class SnykOrgCreator:
     def __init__(self, group_id: str):
         self.group_id = group_id
-        self.logger = setup_logging()
+        self.logger = setup_logging('create_orgs')
     
     def read_applications_from_csv(self, csv_file_path: str) -> List[Dict]:
         """
-        Read applications from CSV file with enhanced parsing
+        Read applications from CSV file for organization creation
+        Uses centralized CSV parsing (only repositories) - applications with repos need orgs
         """
-        applications = []
+        # Sanitize path for safety
+        csv_file_path = sanitize_path(csv_file_path)
         
-        try:
-            if PANDAS_AVAILABLE:
-                # Try reading normally first
-                df = pd.read_csv(csv_file_path)
-                
-                if 'Application' not in df.columns:
-                    print("Error: 'Application' column not found in CSV")
-                    print(f"Available columns: {list(df.columns)}")
-                    return []
-                
-                # Process each row
-                for index, row in df.iterrows():
-                    app_name = str(row.get("Application", "")).strip()
-                    if app_name and app_name.lower() not in ['nan', 'n/a', '']:
-                        # Handle multiple applications separated by commas
-                        app_names = [name.strip() for name in app_name.split(',') 
-                                    if name.strip() and name.strip().lower() not in ['n/a', 'nan']]
-                        
-                        for single_app in app_names:
-                            applications.append({
-                                'application_name': single_app,
-                                'row_index': index
-                            })
-            else:
-                # Basic CSV parsing fallback
-                with open(csv_file_path, 'r', newline='', encoding='utf-8') as csvfile:
-                    reader = csv.DictReader(csvfile)
-                    
-                    if 'Application' not in reader.fieldnames:
-                        error_msg = "Error: 'Application' column not found in CSV"
-                        print(error_msg)
-                        print(f"Available columns: {reader.fieldnames}")
-                        self.logger.error(error_msg)
-                        self.logger.error(f"Available columns: {reader.fieldnames}")
-                        return []
-                    
-                    for index, row in enumerate(reader):
-                        app_name = row.get("Application", "").strip()
-                        if app_name and app_name.lower() not in ['nan', 'n/a', '']:
-                            # Handle multiple applications separated by commas
-                            app_names = [name.strip() for name in app_name.split(',') 
-                                        if name.strip() and name.strip().lower() not in ['n/a', 'nan']]
-                            
-                            for single_app in app_names:
-                                applications.append({
-                                    'application_name': single_app,
-                                    'row_index': index
-                                })
+        # Use centralized function - only repositories are relevant for org creation
+        # (applications without repositories don't need Snyk organizations)
+        applications = read_applications_from_csv(csv_file_path, logger=self.logger)
         
-        except FileNotFoundError:
-            error_msg = f"❌ Error: CSV file not found: {csv_file_path}"
-            print(error_msg)
-            self.logger.error(error_msg)
-            return []
-        except PermissionError:
-            error_msg = f"❌ Error: Permission denied reading CSV file: {csv_file_path}"
-            print(error_msg)
-            self.logger.error(error_msg)
-            return []
-        except UnicodeDecodeError as e:
-            error_msg = f"❌ Error: Encoding issue reading CSV file {csv_file_path}: {e}"
-            print(error_msg)
-            self.logger.error(error_msg)
-            return []
-        except csv.Error as e:
-            error_msg = f"❌ Error: CSV parsing error in {csv_file_path}: {e}"
-            print(error_msg)
-            self.logger.error(error_msg)
-            return []
-        except Exception as e:
-            error_msg = f"Error reading CSV file: {e}"
-            print(error_msg)
-            self.logger.error(error_msg)
-            return []
-        
-        print(f"Found {len(applications)} application entries from CSV")
+        print(f"Found {len(applications)} repository entries from CSV")
         return applications
 
     def create_orgs_json(self, csv_file_path: str, output_json_path: str, source_org_id: str = None):
+        # Sanitize CSV path for safety (output path sanitized in safe_write_json)
+        csv_file_path = sanitize_path(csv_file_path)
         """
         Create orgs.json file with all unique Application names from CSV
         """
@@ -213,30 +103,8 @@ class SnykOrgCreator:
         orgs_json = {"orgs": orgs_to_create}
         
         # Write to file with error handling
-        try:
-            with open(output_json_path, 'w') as f:
-                json.dump(orgs_json, f, indent=2)
-            
-            success_msg = f"📄 Created organizations file: {output_json_path}"
-            print(success_msg)
-            self.logger.info(success_msg)
-            print(f"   Organizations to create: {len(orgs_to_create)}")
-            
-        except PermissionError:
-            error_msg = f"❌ Error: Permission denied writing to {output_json_path}"
-            print(error_msg)
-            self.logger.error(error_msg)
-            sys.exit(1)
-        except OSError as e:
-            error_msg = f"❌ Error: Failed to write file {output_json_path}: {e}"
-            print(error_msg)
-            self.logger.error(error_msg)
-            sys.exit(1)
-        except Exception as e:
-            error_msg = f"❌ Error: Unexpected error writing file {output_json_path}: {e}"
-            print(error_msg)
-            self.logger.error(error_msg)
-            sys.exit(1)
+        safe_write_json(orgs_json, output_json_path, self.logger)
+        print(f"   Organizations to create: {len(orgs_to_create)}")
 
 
 def main():
@@ -261,31 +129,23 @@ Examples:
     args = parser.parse_args()
     
     # Initialize logging early
-    logger = setup_logging()
+    logger = setup_logging('create_orgs')
     logger.info("=== Starting create_orgs.py ===")
     logger.info(f"Command line arguments: {vars(args)}")
     
+    # Sanitize input paths (output path sanitized in safe_write_json)
+    try:
+        args.csv_file = sanitize_path(args.csv_file)
+    except ValueError as ve:
+        log_error_and_exit(f"❌ Error: {ve}", logger)
+
     # Input validation
-    # Check if CSV file exists
-    if not os.path.exists(args.csv_file):
-        error_msg = f"❌ Error: CSV file not found: {args.csv_file}"
-        print(error_msg)
-        logger.error(error_msg)
-        sys.exit(1)
-    
-    # Validate group ID format (basic UUID check)
-    if not args.group_id or len(args.group_id.strip()) == 0:
-        error_msg = "❌ Error: Group ID cannot be empty"
-        print(error_msg)
-        logger.error(error_msg)
-        sys.exit(1)
+    validate_file_exists(args.csv_file, logger)
+    validate_non_empty_string(args.group_id, "Group ID", logger)
     
     # Validate source org ID format if provided
-    if args.source_org_id and len(args.source_org_id.strip()) == 0:
-        error_msg = "❌ Error: Source org ID cannot be empty if provided"
-        print(error_msg)
-        logger.error(error_msg)
-        sys.exit(1)
+    if args.source_org_id:
+        validate_non_empty_string(args.source_org_id, "Source org ID", logger)
     
     # Generate automatic filename if not provided
     if not args.output:
