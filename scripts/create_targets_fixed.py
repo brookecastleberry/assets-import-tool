@@ -17,10 +17,21 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import logging
+from datetime import datetime
 
 # Disable SSL warnings for corporate networks/proxies
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Import GitHub App authentication support
+try:
+    from github_app_auth import GitHubAppAuth
+    GITHUB_APP_AVAILABLE = True
+except ImportError:
+    GITHUB_APP_AVAILABLE = False
+    print("Warning: GitHub App authentication not available (PyJWT not installed)")
+    GitHubAppAuth = None
 
 try:
     import pandas as pd
@@ -30,11 +41,58 @@ except ImportError:
     print("Warning: pandas not available, using basic CSV parsing")
 
 
+def setup_logging() -> logging.Logger:
+    """
+    Setup logging to file using SNYK_LOG_PATH environment variable
+    """
+    log_path = os.environ.get('SNYK_LOG_PATH')
+    if not log_path:
+        print("Warning: SNYK_LOG_PATH environment variable not set. Logs will only be displayed on console.")
+        # Create a console-only logger
+        logger = logging.getLogger('create_targets')
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            console_handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
+        return logger
+    
+    # Ensure the log directory exists
+    os.makedirs(log_path, exist_ok=True)
+    
+    # Create log filename with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = os.path.join(log_path, f'create_targets_{timestamp}.log')
+    
+    # Setup logger
+    logger = logging.getLogger('create_targets')
+    logger.setLevel(logging.INFO)
+    
+    # Avoid duplicate handlers
+    if not logger.handlers:
+        # File handler
+        file_handler = logging.FileHandler(log_file)
+        file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+        
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
+    
+    print(f"📝 Logging to: {log_file}")
+    return logger
+
+
 class SnykTargetMapper:
     def __init__(self, group_id: str, orgs_json_file: str = "snyk-created-orgs.json"):
         self.group_id = group_id
         self.orgs_json_file = orgs_json_file
         self.org_data = None
+        self.logger = setup_logging()
         
         # Rate limiting configuration - auto-tune based on repository count
         self.rate_limit_requests_per_minute = 1000  # Will be auto-tuned
@@ -58,12 +116,18 @@ class SnykTargetMapper:
             with open(self.orgs_json_file, 'r') as f:
                 data = json.load(f)
                 self.org_data = data.get('orgData', [])
-                print(f"Loaded {len(self.org_data)} organizations from {self.orgs_json_file}")
+                message = f"Loaded {len(self.org_data)} organizations from {self.orgs_json_file}"
+                print(message)
+                self.logger.info(message)
         except FileNotFoundError:
-            print(f"Error: {self.orgs_json_file} file not found")
+            error_msg = f"Error: {self.orgs_json_file} file not found"
+            print(error_msg)
+            self.logger.error(error_msg)
             self.org_data = []
         except json.JSONDecodeError as e:
-            print(f"Error parsing JSON file {self.orgs_json_file}: {e}")
+            error_msg = f"Error parsing JSON file {self.orgs_json_file}: {e}"
+            print(error_msg)
+            self.logger.error(error_msg)
             self.org_data = []
     
     def get_organizations_from_group(self) -> List[Dict]:
@@ -141,23 +205,20 @@ class SnykTargetMapper:
                 # Try reading normally first
                 df = pd.read_csv(csv_file_path)
                 
-                # Check if 'Application' is in columns, if not, try skipping first row
                 if 'Application' not in df.columns:
-                    print("Application column not found, trying to skip header row...")
-                    try:
-                        df = pd.read_csv(csv_file_path, skiprows=1)
-                    except Exception as e:
-                        print(f"Error reading CSV with skiprows=1: {e}")
-                        return []
-                
-                if 'Application' not in df.columns:
-                    print("Error: 'Application' column not found in CSV")
+                    error_msg = "Error: 'Application' column not found in CSV"
+                    print(error_msg)
                     print(f"Available columns: {list(df.columns)}")
+                    self.logger.error(error_msg)
+                    self.logger.error(f"Available columns: {list(df.columns)}")
                     return []
                 
                 if 'Type' not in df.columns:
-                    print("Error: 'Type' column not found in CSV")
+                    error_msg = "Error: 'Type' column not found in CSV"
+                    print(error_msg)
                     print(f"Available columns: {list(df.columns)}")
+                    self.logger.error(error_msg)
+                    self.logger.error(f"Available columns: {list(df.columns)}")
                     return []
                 
                 # Process each row
@@ -186,33 +247,25 @@ class SnykTargetMapper:
             else:
                 # Basic CSV parsing fallback
                 with open(csv_file_path, 'r', newline='', encoding='utf-8') as csvfile:
-                    # Try to detect if we need to skip the first row
-                    sample = csvfile.read(1024)
-                    csvfile.seek(0)
-                    
-                    # Check if first line contains "Application" column
-                    first_line = csvfile.readline().strip().lower()
-                    csvfile.seek(0)
-                    
-                    start_row = 0
-                    if first_line and 'application' not in first_line:
-                        # Skip first row (title row)
-                        csvfile.readline()
-                        start_row = 1
-                    
                     reader = csv.DictReader(csvfile)
                     
                     if 'Application' not in reader.fieldnames:
-                        print("Error: 'Application' column not found in CSV")
+                        error_msg = "Error: 'Application' column not found in CSV"
+                        print(error_msg)
                         print(f"Available columns: {reader.fieldnames}")
+                        self.logger.error(error_msg)
+                        self.logger.error(f"Available columns: {reader.fieldnames}")
                         return []
                     
                     if 'Type' not in reader.fieldnames:
-                        print("Error: 'Type' column not found in CSV")
+                        error_msg = "Error: 'Type' column not found in CSV"
+                        print(error_msg)
                         print(f"Available columns: {reader.fieldnames}")
+                        self.logger.error(error_msg)
+                        self.logger.error(f"Available columns: {reader.fieldnames}")
                         return []
                     
-                    for index, row in enumerate(reader, start=start_row):
+                    for index, row in enumerate(reader):
                         # Only process rows where Type = Repository
                         asset_type = row.get("Type", "").strip()
                         if asset_type.lower() != 'repository':
@@ -231,14 +284,44 @@ class SnykTargetMapper:
                                     'asset_name': row.get("Asset", ""),
                                     'repository_url': row.get("Repository URL", ""),
                                     'asset_source': row.get("Asset Source", ""),
+                                    'organizations': row.get("Organizations", ""),
                                     'row_index': index
                                 })
         
+        except FileNotFoundError:
+            error_msg = f"❌ Error: CSV file not found: {csv_file_path}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            return []
+        except PermissionError:
+            error_msg = f"❌ Error: Permission denied reading CSV file: {csv_file_path}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            return []
+        except pd.errors.EmptyDataError:
+            error_msg = f"❌ Error: CSV file is empty: {csv_file_path}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            return []
+        except pd.errors.ParserError as e:
+            error_msg = f"❌ Error: Failed to parse CSV file {csv_file_path}: {e}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            return []
+        except UnicodeDecodeError as e:
+            error_msg = f"❌ Error: Encoding issue reading CSV file {csv_file_path}: {e}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            return []
         except Exception as e:
-            print(f"Error reading CSV file: {e}")
+            error_msg = f"Error reading CSV file: {e}"
+            print(error_msg)
+            self.logger.error(error_msg)
             return []
         
-        print(f"Found {len(applications)} repository entries from CSV (filtered by Type = Repository)")
+        message = f"Found {len(applications)} repository entries from CSV (filtered by Type = Repository)"
+        print(message)
+        self.logger.info(message)
         return applications
     
     def detect_workflow_type(self, applications: List[Dict]) -> str:
@@ -369,6 +452,19 @@ class SnykTargetMapper:
     def _get_auth_headers(self, scm_type: str) -> Optional[Dict[str, str]]:
         """Get authentication headers for SCM APIs based on environment variables"""
         if scm_type == 'github':
+            # For github-cloud-app source type, try GitHub App authentication first
+            if self.source_type == 'github-cloud-app' and GITHUB_APP_AVAILABLE:
+                try:
+                    github_app = GitHubAppAuth()
+                    if github_app.is_configured():
+                        self.logger.info("Using GitHub App authentication for API calls")
+                        return github_app.get_auth_headers()
+                    else:
+                        self.logger.warning(f"GitHub App not configured: {github_app.get_configuration_error()}")
+                except Exception as e:
+                    self.logger.warning(f"GitHub App authentication failed: {e}")
+            
+            # Fallback to personal access token
             token = os.getenv('GITHUB_TOKEN')
             if token:
                 return {'Authorization': f'token {token}'}
@@ -404,7 +500,18 @@ class SnykTargetMapper:
         """Display authentication status for SCM APIs"""
         print("🔐 SCM Authentication Status:")
         
-        # Check GitHub
+        # Check GitHub App (for github-cloud-app)
+        if self.source_type == 'github-cloud-app' and GITHUB_APP_AVAILABLE:
+            try:
+                github_app = GitHubAppAuth()
+                if github_app.is_configured():
+                    print("  ✅ GitHub App: Authenticated (GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY found)")
+                else:
+                    print(f"  ❌ GitHub App: {github_app.get_configuration_error()}")
+            except Exception as e:
+                print(f"  ❌ GitHub App: Configuration error - {e}")
+        
+        # Check GitHub Personal Token
         github_token = os.getenv('GITHUB_TOKEN')
         if github_token:
             print("  ✅ GitHub: Authenticated (GITHUB_TOKEN found)")
@@ -448,26 +555,34 @@ class SnykTargetMapper:
                 # Rate limit hit - wait longer
                 elif response.status_code == 429:
                     wait_time = self.retry_delay * (self.retry_backoff ** attempt) * 2  # Extra wait for rate limits
-                    print(f"⚠️  Rate limit hit for {url}, waiting {wait_time}s before retry {attempt + 1}/{self.max_retries}")
+                    warning_msg = f"⚠️  Rate limit hit for {url}, waiting {wait_time}s before retry {attempt + 1}/{self.max_retries}"
+                    print(warning_msg)
+                    self.logger.warning(warning_msg)
                     time.sleep(wait_time)
                     continue
                 
                 # Client errors (4xx) - don't retry
                 elif 400 <= response.status_code < 500:
-                    print(f"⚠️  Client error {response.status_code} for {url}, not retrying")
+                    error_msg = f"⚠️  Client error {response.status_code} for {url}, not retrying"
+                    print(error_msg)
+                    self.logger.error(error_msg)
                     return None
                 
                 # Server errors (5xx) - retry
                 elif response.status_code >= 500:
                     wait_time = self.retry_delay * (self.retry_backoff ** attempt)
-                    print(f"⚠️  Server error {response.status_code} for {url}, retrying in {wait_time}s (attempt {attempt + 1}/{self.max_retries})")
+                    warning_msg = f"⚠️  Server error {response.status_code} for {url}, retrying in {wait_time}s (attempt {attempt + 1}/{self.max_retries})"
+                    print(warning_msg)
+                    self.logger.warning(warning_msg)
                     if attempt < self.max_retries - 1:
                         time.sleep(wait_time)
                     continue
                 
             except requests.exceptions.RequestException as e:
                 wait_time = self.retry_delay * (self.retry_backoff ** attempt)
-                print(f"⚠️  Request exception for {url}: {e}, retrying in {wait_time}s (attempt {attempt + 1}/{self.max_retries})")
+                error_msg = f"⚠️  Request exception for {url}: {e}, retrying in {wait_time}s (attempt {attempt + 1}/{self.max_retries})"
+                print(error_msg)
+                self.logger.error(error_msg)
                 if attempt < self.max_retries - 1:
                     time.sleep(wait_time)
                 continue
@@ -580,8 +695,10 @@ class SnykTargetMapper:
                     else:
                         print(f"🚫 Using empty exclusionGlobs for {app_name} (no exclusions)")
                 else:
-            # Use default exclusionGlobs
-            target["exclusionGlobs"] = "fixtures, tests, __tests__, node_modules"                return target
+                    # Use default exclusionGlobs
+                    target["exclusionGlobs"] = "fixtures, tests, __tests__, node_modules"
+                
+                return target
                 
             except Exception as e:
                 print(f"❌ Error processing {app.get('application_name', 'Unknown')}: {e}")
@@ -957,7 +1074,7 @@ class SnykTargetMapper:
         
         return targets
     
-    def create_targets_json(self, csv_file_path: str, output_json_path: str, source_type: str, empty_org_only: bool = False, branch_override: Optional[str] = None, files_override: Optional[str] = None, exclusion_globs_override: Optional[str] = None, max_workers: Optional[int] = None, rate_limit: Optional[int] = None):
+    def create_targets_json(self, csv_file_path: str, output_json_path: str, source_type: str, empty_org_only: bool = False, limit: Optional[int] = None, branch_override: Optional[str] = None, files_override: Optional[str] = None, exclusion_globs_override: Optional[str] = None, max_workers: Optional[int] = None, rate_limit: Optional[int] = None):
         """
         Create import-targets.json file with proper org mapping
         """
@@ -993,14 +1110,32 @@ class SnykTargetMapper:
         if empty_org_only:
             original_count = len(applications)
             # Only include repositories where Organizations column is "N/A" (not imported yet)
-            applications = [app for app in applications 
-                          if app.get('organizations', '').strip().upper() == 'N/A']
+            # Handle both string "N/A" and pandas NaN values
+            def is_not_imported(app):
+                orgs_value = app.get('organizations', '')
+                
+                # Handle pandas NaN values (which show up as float nan)
+                if str(orgs_value).lower() in ['nan', 'n/a'] or orgs_value == '' or orgs_value is None:
+                    return True
+                    
+                # Handle string values
+                orgs_str = str(orgs_value).strip().upper()
+                return orgs_str in ['N/A', 'NAN'] or orgs_str == ''
+            
+            applications = [app for app in applications if is_not_imported(app)]
             filtered_count = len(applications)
             print(f"🔍 Filtering for repositories not yet imported (Organizations = 'N/A'): {filtered_count}/{original_count} applications remaining")
             
             if not applications:
                 print("✅ All repositories have already been imported to Snyk organizations!")
                 return
+        
+        # Apply limit if specified
+        if limit and limit > 0:
+            original_count = len(applications)
+            applications = applications[:limit]
+            limited_count = len(applications)
+            print(f"📊 Applying limit: processing {limited_count}/{original_count} repositories (--limit {limit})")
         
         # Detect workflow type
         workflow_type = self.detect_workflow_type(applications)
@@ -1019,12 +1154,31 @@ class SnykTargetMapper:
         # Create final JSON structure
         targets_json = {"targets": targets}
         
-        # Write to file
-        with open(output_json_path, 'w') as f:
-            json.dump(targets_json, f, indent=2)
-        
-        print(f"📄 Created targets file: {output_json_path}")
-        print(f"   Targets created: {len(targets)}")
+        # Write to file with error handling
+        try:
+            with open(output_json_path, 'w') as f:
+                json.dump(targets_json, f, indent=2)
+            
+            success_msg = f"📄 Created targets file: {output_json_path}"
+            print(success_msg)
+            self.logger.info(success_msg)
+            print(f"   Targets created: {len(targets)}")
+            
+        except PermissionError:
+            error_msg = f"❌ Error: Permission denied writing to {output_json_path}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            raise
+        except OSError as e:
+            error_msg = f"❌ Error: Failed to write file {output_json_path}: {e}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            raise
+        except Exception as e:
+            error_msg = f"❌ Error: Unexpected error writing file {output_json_path}: {e}"
+            print(error_msg)
+            self.logger.error(error_msg)
+            raise
         
         # Summary by organization
         org_counts = {}
@@ -1070,6 +1224,12 @@ Examples:
   # Basic usage - auto-tuned for optimal performance
   python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github
   
+  # Process only the first 50 repositories (batching for large datasets)
+  python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github --limit 50
+  
+  # Process only repositories not yet imported, limited to 100
+  python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github --empty-org-only --limit 100
+  
   # Enterprise scale (10,000+ repos) - still auto-tuned
   python create_targets.py --group-id abc123 --csv-file large-dataset.csv --orgs-json snyk-created-orgs.json --source github
   
@@ -1093,6 +1253,7 @@ Examples:
     parser.add_argument('--source', required=True, help='Integration type to use from organizations JSON (github, github-cloud-app, github-enterprise, gitlab, azure-repos, bitbucket-cloud, bitbucket-server)')
     parser.add_argument('--output', help='Output JSON file path (default: import-targets.json)')
     parser.add_argument('--empty-org-only', action='store_true', help='Only process repositories where Organizations column is "N/A" (repositories not yet imported to Snyk)')
+    parser.add_argument('--limit', type=int, help='Maximum number of repository targets to process (useful for batching large datasets)')
     parser.add_argument('--branch', help='Override branch for all repositories (default: auto-detect from CSV or repository API)')
     parser.add_argument('--files', help='Override files for all repositories - comma-separated list of file paths to scan (if not specified, files field is omitted from import data)')
     parser.add_argument('--exclusion-globs', help='Override exclusionGlobs for all repositories (default: "fixtures, tests, __tests__, node_modules")')
@@ -1103,16 +1264,61 @@ Examples:
     
     args = parser.parse_args()
     
-    # Snyk token is no longer required since we're reading from JSON file
+    # Initialize logging early
+    logger = setup_logging()
+    logger.info("=== Starting create_targets_fixed.py ===")
+    logger.info(f"Command line arguments: {vars(args)}")
+    
+    # Input validation
+    # Check if CSV file exists
+    if not os.path.exists(args.csv_file):
+        error_msg = f"❌ Error: CSV file not found: {args.csv_file}"
+        print(error_msg)
+        logger.error(error_msg)
+        sys.exit(1)
+    
+    # Validate limit parameter
+    if args.limit is not None and args.limit <= 0:
+        error_msg = f"❌ Error: --limit must be a positive integer, got: {args.limit}"
+        print(error_msg)
+        logger.error(error_msg)
+        sys.exit(1)
+    
+    # Validate performance parameters
+    if args.max_workers is not None and args.max_workers <= 0:
+        error_msg = f"❌ Error: --max-workers must be a positive integer, got: {args.max_workers}"
+        print(error_msg)
+        logger.error(error_msg)
+        sys.exit(1)
+        
+    if args.rate_limit is not None and args.rate_limit <= 0:
+        error_msg = f"❌ Error: --rate-limit must be a positive integer, got: {args.rate_limit}"
+        print(error_msg)
+        logger.error(error_msg)
+        sys.exit(1)
+    
+    # Validate source type
+    valid_sources = ['github', 'github-cloud-app', 'github-enterprise', 'gitlab', 'azure-repos', 'bitbucket-cloud', 'bitbucket-server']
+    if args.source not in valid_sources:
+        error_msg = f"❌ Error: Invalid source type '{args.source}'. Valid options: {', '.join(valid_sources)}"
+        print(error_msg)
+        logger.error(error_msg)
+        sys.exit(1)
+    
     # Check if organizations JSON file exists
     if not os.path.exists(args.orgs_json):
-        print(f"Error: {args.orgs_json} file not found")
+        error_msg = f"Error: {args.orgs_json} file not found"
+        print(error_msg)
         print(f"Make sure the organizations JSON file exists at {args.orgs_json}")
+        logger.error(error_msg)
+        logger.error(f"Make sure the organizations JSON file exists at {args.orgs_json}")
         sys.exit(1)
     
     # Use the specified source type
     source_type = args.source
-    print(f"Using integration type: {source_type}")
+    message = f"Using integration type: {source_type}"
+    print(message)
+    logger.info(message)
     
     # Generate automatic filename if not provided
     if not args.output:
@@ -1122,16 +1328,33 @@ Examples:
     
     mapper = SnykTargetMapper(args.group_id, args.orgs_json)
     
-    print(f"Creating targets file: {output_path}")
+    message = f"Creating targets file: {output_path}"
+    print(message)
+    logger.info(message)
+    
     if args.max_workers or args.rate_limit:
-        print(f"⚙️  Using custom performance settings...")
+        perf_msg = f"⚙️  Using custom performance settings..."
+        print(perf_msg)
+        logger.info(perf_msg)
     else:
-        print(f"🎯 Using auto-tuned performance settings (optimal for your repository count)")
+        perf_msg = f"🎯 Using auto-tuned performance settings (optimal for your repository count)"
+        print(perf_msg)
+        logger.info(perf_msg)
     
-    mapper.create_targets_json(args.csv_file, output_path, source_type, args.empty_org_only, args.branch, args.files, args.exclusion_globs, args.max_workers, args.rate_limit)
-    
-    print(f"\n✅ Phase 2 complete! Use this file to import repositories:")
-    print(f"   {output_path}")
+    try:
+        mapper.create_targets_json(args.csv_file, output_path, source_type, args.empty_org_only, args.limit, args.branch, args.files, args.exclusion_globs, args.max_workers, args.rate_limit)
+        
+        success_msg = f"✅ Phase 2 complete! Use this file to import repositories: {output_path}"
+        print(f"\n{success_msg}")
+        logger.info(success_msg)
+        logger.info("=== create_targets_fixed.py completed successfully ===")
+        
+    except Exception as e:
+        error_msg = f"❌ Fatal error during target creation: {e}"
+        print(f"\n{error_msg}")
+        logger.error(error_msg)
+        logger.error("=== create_targets_fixed.py failed ===")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

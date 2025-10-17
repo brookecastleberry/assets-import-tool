@@ -1,6 +1,8 @@
 # Assets Import Tool for Snyk
 
-A comprehensive toolkit for importing repositories from various SCM platforms into Snyk organizations with proper application boundary enforcement.
+A comprehensive tool for importing repositories from various SCM platforms into Snyk organizations with proper application boundary enforcement.
+
+![Snyk OSS Example](https://raw.githubusercontent.com/snyk-labs/oss-images/main/oss-example.jpg)
 
 ## 🎯 Overview
 
@@ -10,24 +12,38 @@ This tool provides a complete workflow for importing repositories into Snyk whil
 
 The import process follows a 4-step workflow:
 
-1. **Transform**: Prepare Snyk org data for snyk-api-import compatibility
-2. **Generate**: Use snyk-api-import to create import targets
-3. **Filter**: Enforce application boundaries to prevent cross-org contamination
-4. **Import**: Execute the filtered import to Snyk
+1. **Generate Organization Data**: Create Snyk organization structure from your CSV (`create_orgs.py`)
+2. **Create Organizations in Snyk**: Use `snyk-api-import` to create the organizations in Snyk
+3. **Generate Import Targets**: Create repository import targets with automatic SCM integration and application boundary enforcement (`create_targets_fixed.py`)
+4. **Import Repositories**: Use `snyk-api-import` to perform the actual repository imports into Snyk
 
 ## 📋 Prerequisites
 
 ### Required Files
 - `assets.csv` - Repository inventory with Application column mapping
-- `snyk-created-orgs.json` - Your Snyk organization structure
 
-### Environment Variables (for private repos and API discovery)
+### Environment Variables
+
+**Required:**
+
+*Standard Authentication:*
 ```bash
-export GITHUB_TOKEN="your_github_token"
-export GITLAB_TOKEN="your_gitlab_token" 
-export AZURE_DEVOPS_TOKEN="your_azure_token"
-export BITBUCKET_TOKEN="your_bitbucket_token"
+export GITHUB_TOKEN="your_github_personal_access_token"
+export GITLAB_TOKEN="your_gitlab_personal_access_token" 
+export AZURE_DEVOPS_TOKEN="your_azure_devops_personal_access_token"
 export SNYK_TOKEN="your_snyk_token"
+export SNYK_LOG_PATH="/path/to/logs"
+# Example: mkdir -p "$HOME/snyk-logs" && export SNYK_LOG_PATH="$HOME/snyk-logs"
+```
+
+*GitHub App Authentication (for --source github-cloud-app):*
+```bash
+export GITHUB_APP_ID="your_app_id"
+export GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
+your-private-key-content-here
+-----END RSA PRIVATE KEY-----"
+# Optional: target specific installation
+export GITHUB_APP_INSTALLATION_ID="your_installation_id"
 ```
 
 ### Dependencies
@@ -39,122 +55,159 @@ pip install -r requirements.txt
 npm install -g snyk-api-import
 ```
 
+## 📄 Generated Files
+
+This tool creates the following files that are used by `snyk-api-import`:
+
+- `group-{GROUP_ID}-orgs.json` - Snyk organization structure (from `create_orgs.py`)
+- `import-targets.json` - Repository import targets (from `create_targets_fixed.py`)
+
+*Note: Both output filenames can be customized using the `--output` parameter.*
+
+## 📝 Logging
+
+Both scripts automatically generate detailed log files in `SNYK_LOG_PATH`:
+
+- **create_orgs.py** → `create_orgs_YYYYMMDD_HHMMSS.log`
+- **create_targets_fixed.py** → `create_targets_YYYYMMDD_HHMMSS.log`
+
+
+The logs capture:
+- Command line arguments and execution start/end
+- CSV parsing results and organization loading
+- HTTP request failures and rate limiting events
+- Error details with full stack traces
+- Performance metrics and auto-tuning decisions
+
+## ⚠️ Error Handling
+
+Both scripts include robust error handling:
+- All errors are logged with full stack traces and context
+- HTTP/API failures are retried with exponential backoff
+- CSV parsing errors and missing/invalid data are reported in the logs
+- Rate limit events and timeouts are captured and logged
+- The scripts exit with a non-zero status code on fatal errors
+
+Check the log files in your `SNYK_LOG_PATH` for detailed error diagnostics and troubleshooting information.
+
+
 ## 🚀 Quick Start
 
-### Step 1: Transform Organizations
+### Step 1: Generate Organization Data
 
-Choose your discovery method:
-
-**CSV Extraction Mode** (uses existing assets.csv data):
 ```bash
-python transform_orgs_for_import.py --source github
+# Generate Snyk organization structure from your CSV data
+python create_orgs.py --group-id YOUR_GROUP_ID --source-org-id YOUR_SOURCE_ORG_ID --csv-file assets.csv
 ```
 
-**API Discovery Mode** (discovers all accessible organizations):
+
+**Output**: `group-YOUR_GROUP_ID-orgs.json`
+
+> **Note:** Organization data will only be generated for unique Application org names found in the CSV file. Duplicate Application names will be ignored for org creation.
+
+### Step 2: Create Organizations in Snyk
+
 ```bash
-python transform_orgs_for_import.py --source github --api-discovery
+# Use snyk-api-import to create the organizations in Snyk
+snyk-api-import orgs:create --file=group-YOUR_GROUP_ID-orgs.json
 ```
 
-**Output**: `snyk-created-orgs-transformed-github-api.json`
-
-### Step 2: Generate Import Targets
+### Step 3: Generate Import Targets
 
 ```bash
-snyk-api-import import --file=snyk-created-orgs-transformed-github-api.json
+# Generate import targets with automatic SCM integration and boundary enforcement
+python create_targets_fixed.py --group-id YOUR_GROUP_ID --csv-file assets.csv --orgs-json snyk-created-orgs.json --source github
 ```
 
-**Output**: `github-import-targets.json`
+**Output**: `import-targets.json`
 
-### Step 3: Filter by Application Boundaries
-
-```bash
-python filter_import_targets.py \
-  --targets github-import-targets.json \
-  --csv assets.csv \
-  --output filtered-github-targets.json
-```
-
-### Step 4: Import to Snyk
+### Step 4: Import Repositories
 
 ```bash
-snyk-api-import import --file=filtered-github-targets.json
-```
+# Use snyk-api-import to perform the actual repository imports
+snyk-api-import import --file=import-targets.json
 
-**Use the Snyk API Import Tool to create these organizations first!**
-
-#### Phase 2: Create Import Targets
-
-```bash
-# Basic usage (Enterprise optimized with auto-detection)
-python create_targets.py --group-id YOUR_GROUP_ID --csv-file your-data.csv --orgs-json snyk-created-orgs.json --source github
-```
-
-This creates an `import-targets.json` file ready for the Snyk API Import Tool.
-
-## 🚀 Enterprise Scale Usage
-
-### **Auto-Tuned Performance (Default)**
-```bash
-# Works for any scale - automatically optimized!
-python create_targets.py --group-id YOUR_GROUP_ID --csv-file your-data.csv --orgs-json snyk-created-orgs.json --source github
-
-# 10,000+ repositories? Still just one command:
-python create_targets.py --group-id YOUR_GROUP_ID --csv-file large-dataset.csv --orgs-json snyk-created-orgs.json --source github
+# For debugging issues, use the debug version:
+DEBUG=*snyk* snyk-api-import import --file=import-targets.json
 ```
 
 ### **Custom Performance Tuning (Optional)**
 ```bash
 # Override auto-tuning if needed
-python create_targets.py \
+python create_targets_fixed.py \
   --group-id YOUR_GROUP_ID \
   --csv-file your-data.csv \
-  --orgs-json snyk-created-orgs.json \
+  --orgs-json group-YOUR_GROUP_ID-orgs.json \
   --source github \
   --max-workers 25 \
   --rate-limit 30
 ```
 
-### **Quick Test with Sample Data**
-```bash
-# Generate test data
-python create_test_data.py --repos 100
+## � Command Line Reference
 
-# Test enterprise features
-python create_targets.py \
-  --group-id test-group \
-  --csv-file test-repos.csv \
-  --orgs-json test-orgs.json \
-  --source github \
-  --max-workers 5
+### create_orgs.py - Organization Generator
+
+**Required Flags:**
+- `--group-id` - Snyk Group ID where organizations will be created
+- `--csv-file` - Path to CSV file containing Application data
+
+**Optional Flags:**
+- `--source-org-id` - Source organization ID to copy settings from (recommended for consistent configuration)
+- `--output` - Custom output file path (default: `group-{GROUP_ID}-orgs.json`)
+
+**Example:**
+```bash
+python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file assets.csv --output my-orgs.json
 ```
 
-### Options
+### create_targets_fixed.py - Import Targets Generator
 
-#### Create Organizations (Phase 1)
+**Required Flags:**
+- `--group-id` - Snyk Group ID where repositories will be imported
+- `--csv-file` - Path to CSV file containing repository data
+- `--orgs-json` - Path to snyk-created-orgs.json 
+- `--source` - Integration type (one at a time): `github`, `github-cloud-app`, `github-enterprise`, `gitlab`, `azure-repos`
+
+**Optional Flags:**
+
+*Output & Filtering:*
+- `--output` - Custom output file path (default: `import-targets.json`)
+- `--empty-org-only` - Only process repositories where Organizations column is "N/A" (repositories not yet imported to Snyk)
+- `--limit` - Maximum number of repository targets to process (useful for batching)
+
+*Repository Configuration Overrides (applies to all repositories):*
+- `--branch` - Override branch for all repositories (default: auto-detect)
+- `--files` - Override files to scan for all repositories - comma-separated list (default: omitted for full scan)
+- `--exclusion-globs` - Override exclusion patterns for all repositories (default: `"fixtures, tests, __tests__, node_modules"`)
+
+*Performance Tuning:*
+- `--max-workers` - Maximum concurrent workers (default: auto-tuned based on repository count)
+- `--rate-limit` - Maximum requests per minute (default: auto-tuned based on source type)
+
+**Example:**
 ```bash
-# Basic usage
-python create_orgs.py --group-id abc123 --csv-file mydata.csv
-
-# With source org (copies settings from existing org)
-python create_orgs.py --group-id abc123 --csv-file mydata.csv --source-org-id def456
-
-# Custom output file
-python create_orgs.py --group-id abc123 --csv-file mydata.csv --output my-orgs.json
+python create_targets_fixed.py --group-id abc123 --csv-file assets.csv --orgs-json group-abc123-orgs.json --source github --branch main --files "package.json" --exclusion-globs "test,spec" --max-workers 20 --rate-limit 100
 ```
 
-#### Create Targets (Phase 2) - Enterprise Enhanced ⭐
-```bash
-# Required parameters
-python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github
 
-# Enterprise performance tuning
-python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github --max-workers 20 --rate-limit 800
+## ⚡ Performance & Rate Limiting
 
-# Global overrides for all repositories  
-python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github --branch main --files "package.json" --exclusion-globs "test,spec"
+### SCM API Rate Limits
 
-# Custom output file
-python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source gitlab --output my-targets.json
+The tool automatically respects SCM platform rate limits:
+
+| Platform | API Rate Limit | Tool Default | Notes |
+|----------|----------------|--------------|-------|
+| **GitHub** | 5,000 req/hour (83 req/min) | 80 req/min | Uses GitHub REST API v3 |
+| **GitLab** | 300 req/min | 250 req/min | Uses GitLab REST API v4 |
+| **Azure DevOps** | 200 req/min | 150 req/min | Uses Azure DevOps REST API 7.0 |
+
+### Auto-Tuning
+
+**Concurrent Workers:** Automatically scales from 10 workers (≤100 repos) to 50 workers (5,000+ repos)
+
+**Rate Limiting:** Tool defaults are conservative to prevent API throttling
+
 ```
 
 ## 📊 Performance Comparison
@@ -169,12 +222,11 @@ python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json sny
 *Performance with automatic worker scaling and source-aware rate limiting*
 
 **Auto-Tuning Examples:**
-- **50 repos**: 5 workers, 60 req/min (GitHub)
-- **1,000 repos**: 12 workers, 48 req/min (GitHub)  
-- **5,000 repos**: 15 workers, 42 req/min (GitHub)
-- **GitLab**: 200 req/min base, Bitbucket: 12 req/min base
+- **50 repos**: 10 workers, 80 req/min (GitHub)
+- **1,000 repos**: 20 workers, 250 req/min (GitLab)  
+- **5,000 repos**: 40 workers, 150 req/min (Azure DevOps)
 
-## CSV File Format
+## 📋 CSV File Format
 
 Your CSV should include these columns:
 
@@ -184,18 +236,10 @@ Your CSV should include these columns:
 - `Repository URL` - Full URL to the repository
 - `Asset Source` - Source system (GitHub, GitLab, etc.)
 
-**Optional:**
-- `Asset` - Asset description
 
-**Removed Columns** (now auto-detected or overridden via command line):
-- ~~`Gitlab Project ID`~~ - Auto-detected via GitLab API
-- ~~`Branch`~~ - Auto-detected or use `--branch` override
-- ~~`exclusionGlobs`~~ - Use `--exclusion-globs` override  
-- ~~`Files`~~ - Use `--files` override
+**Note:** The tool handles CSV files with title rows automatically, filters by `Type="Repository"`, and skips any repository row where the Application cell is empty.
 
-**Note:** The tool handles CSV files with title rows automatically and filters by `Type="Repository"`.
-
-## Asset Source Filtering
+## 🔍 Asset Source Filtering
 
 The script uses the `Asset Source` column to filter repositories by integration type:
 
@@ -204,31 +248,23 @@ The script uses the `Asset Source` column to filter repositories by integration 
 | `github`         | "github"                     |
 | `gitlab`         | "gitlab"                     |
 | `azure-repos`    | "azure", "devops"           |
-| `bitbucket-cloud`| "bitbucket"                 |
 
 Example CSV:
 ```csv
 Application,Type,Asset,Repository URL,Asset Source
 MyApp,Repository,Backend Service,https://github.com/company/myapp,GitHub Enterprise
 DataPipe,Repository,Data Pipeline,https://gitlab.com/company/data,GitLab SaaS
-WebApp,Repository,Frontend,https://bitbucket.org/company/web,Bitbucket Cloud
+WebApp,Repository,Frontend,https://dev.azure.com/company/project/_git/webapp,Azure DevOps
 ```
 
-## Auto-Detection Features
+## 🤖 Auto-Detection Features
 
 🤖 **Branch Detection**: Automatically detects default branch via repository APIs
 🔍 **GitLab Project ID**: Auto-detects project IDs for GitLab repositories  
 ⚡ **Integration Matching**: Smart filtering based on Asset Source keywords
 
-## 📚 Documentation
 
-- **[ENTERPRISE_SCALING.md](ENTERPRISE_SCALING.md)** - Comprehensive enterprise scaling guide
-  - Performance recommendations for 10,000+ repositories
-  - Rate limiting guidelines for different APIs
-  - Troubleshooting common issues
-  - Best practices for large-scale imports
-
-## Integration Types
+## 🔗 Integration Types
 
 Supported integration types:
 - `github` - GitHub
@@ -236,23 +272,8 @@ Supported integration types:
 - `github-enterprise` - GitHub Enterprise
 - `gitlab` - GitLab  
 - `azure-repos` - Azure DevOps
-- `bitbucket-cloud` - Bitbucket Cloud
-- `bitbucket-server` - Bitbucket Server
 
-## 🛠️ Enterprise Support
+**Note**: Bitbucket integrations are not currently supported.
 
-For organizations processing 10,000+ repositories:
 
-1. **Read**: [ENTERPRISE_SCALING.md](ENTERPRISE_SCALING.md) for detailed guidance
-2. **Test**: Use `create_test_data.py` to generate sample data
-3. **Tune**: Adjust `--max-workers` and `--rate-limit` for your environment
-4. **Monitor**: Watch progress output for performance insights
-- `github-enterprise` - GitHub Enterprise
 
-## Example Workflow
-
-1. **Prepare your CSV** with Application names and Repository URLs
-2. **Phase 1**: `python create_orgs.py --group-id abc123 --csv-file data.csv`
-3. **Create organizations** in Snyk using the generated JSON file
-4. **Phase 2**: `python create_targets.py --group-id abc123 --csv-file data.csv`  
-5. **Import repositories** in Snyk using the generated targets file
