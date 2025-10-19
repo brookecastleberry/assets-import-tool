@@ -19,10 +19,10 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import logging
 from datetime import datetime
-from logging_utils import setup_logging
-from csv_utils import read_applications_from_csv
-from api import rate_limit, get_auth_headers, display_auth_status, make_request_with_retry
-from file_utils import sanitize_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_positive_integer
+from src.logging_utils import setup_logging
+from src.csv_utils import read_applications_from_csv
+from src.api import rate_limit, get_auth_headers, display_auth_status, make_request_with_retry
+from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_positive_integer
 
 # Disable SSL warnings for corporate networks/proxies
 import urllib3
@@ -428,7 +428,7 @@ class SnykTargetMapper:
     def create_gitlab_targets(self, applications: List[Dict], org_mapping: Dict[str, str], source_type: str, branch_override: Optional[str] = None, files_override: Optional[str] = None, exclusion_globs_override: Optional[str] = None) -> List[Dict]:
         """
         Create GitLab targets structure
-        Filters repositories based on Asset Source matching the specified source type.
+        Applications are already filtered by source type and limit in create_targets_json().
         """
         targets = []
         
@@ -438,10 +438,6 @@ class SnykTargetMapper:
             
             if not org_id:
                 print(f"⚠️  No organization found for application: {app_name}")
-                continue
-            
-            # Check Asset Source to filter repositories
-            if not self.should_include_application(app, source_type):
                 continue
             
             # Find integration using the specified source type
@@ -615,26 +611,9 @@ class SnykTargetMapper:
 
     def create_general_targets(self, applications: List[Dict], org_mapping: Dict[str, str], source_type: str, branch_override: Optional[str], files_override: Optional[str], exclusion_globs_override: Optional[str], max_workers: int) -> List[Dict]:
         """Create general targets structure for GitHub, Azure DevOps, etc."""
-        filtered_apps = []
-        for app in applications:
-            app_name = app['application_name']
-            org_id = org_mapping.get(app_name)
-            if not org_id:
-                print(f"⚠️  No organization found for application: {app_name}")
-                continue
-            if not self.should_include_application(app, source_type):
-                continue
-            repository_url = app.get('repository_url', '').strip()
-            if not repository_url:
-                print(f"⚠️  No repository URL for {app_name}")
-                continue
-            filtered_apps.append(app)
-        if not filtered_apps:
-            print("❌ No applications match the source type filter")
-            return []
-        print(f"🔍 Filtered to {len(filtered_apps)} applications matching {source_type}")
+        # Applications are already filtered by source type and limit in create_targets_json()
         return self._process_repository_batch(
-            filtered_apps,
+            applications,
             org_mapping,
             source_type,
             branch_override,
@@ -643,9 +622,9 @@ class SnykTargetMapper:
             max_workers
         )
     
-    def create_targets_json(self, csv_file_path: str, output_json_path: str, source_type: str, empty_org_only: bool = False, limit: Optional[int] = None, branch_override: Optional[str] = None, files_override: Optional[str] = None, exclusion_globs_override: Optional[str] = None, max_workers: Optional[int] = None, rate_limit: Optional[int] = None):
+    def create_targets_json(self, csv_file_path: str, output_json_path: str, source_type: str, empty_org_only: bool = False, limit: Optional[int] = None, rows: Optional[str] = None, branch_override: Optional[str] = None, files_override: Optional[str] = None, exclusion_globs_override: Optional[str] = None, max_workers: Optional[int] = None, rate_limit: Optional[int] = None):
         # Sanitize CSV path for safety (output path sanitized in safe_write_json)
-        csv_file_path = sanitize_path(csv_file_path)
+        csv_file_path = sanitize_input_path(csv_file_path)
         self.logger.info(f"Sanitized CSV path: {csv_file_path}")
         """
         Create import-targets.json file with proper org mapping
@@ -675,6 +654,61 @@ class SnykTargetMapper:
             print("❌ No applications found in CSV")
             return
         
+        # Filter by specific row numbers FIRST (highest precedence)
+        if rows:
+            try:
+                # Parse row numbers supporting both individual (2,5,8) and ranges (2-5)
+                row_numbers = []
+                for part in rows.split(','):
+                    part = part.strip()
+                    if '-' in part:
+                        # Handle range like "2-5"
+                        start, end = part.split('-', 1)
+                        start, end = int(start.strip()), int(end.strip())
+                        if start > end:
+                            print(f"❌ Error: Invalid range '{part}' - start ({start}) must be <= end ({end})")
+                            return
+                        row_numbers.extend(range(start, end + 1))
+                    else:
+                        # Handle individual row number
+                        row_numbers.append(int(part))
+                
+                # Remove duplicates and sort
+                row_numbers = sorted(set(row_numbers))
+                row_indices = [row - 1 for row in row_numbers]  # Convert to 0-based
+                
+                # Validate row numbers
+                max_rows = len(applications)
+                invalid_rows = [row for row in row_numbers if row < 1 or row > max_rows]
+                if invalid_rows:
+                    print(f"❌ Error: Invalid row numbers {invalid_rows}. CSV has {max_rows} data rows (valid range: 1-{max_rows})")
+                    return
+                
+                # Filter to specific rows
+                original_count = len(applications)
+                applications = [applications[i] for i in row_indices if i < len(applications)]
+                filtered_count = len(applications)
+                
+                # Show expanded row numbers for clarity
+                if len(row_numbers) <= 10:
+                    expanded_rows = ','.join(map(str, row_numbers))
+                else:
+                    expanded_rows = f"{','.join(map(str, row_numbers[:5]))}...{','.join(map(str, row_numbers[-2:]))} ({len(row_numbers)} total)"
+                
+                print(f"🔍 Filtering by specific row numbers: {rows}")
+                if rows != expanded_rows:
+                    print(f"🔍 Expanded to rows: {expanded_rows}")
+                print(f"📊 Selected {filtered_count}/{original_count} applications from specified rows")
+                
+                if not applications:
+                    print("❌ No applications found for specified row numbers")
+                    return
+                    
+            except ValueError as e:
+                print(f"❌ Error parsing row numbers '{rows}': {e}")
+                print("   Examples: --rows 2,5,8 (individual) or --rows 2-5 (range) or --rows 2,5-8,10 (mixed)")
+                return
+        
         # Auto-tune performance settings based on repository count
         self._auto_tune_performance(len(applications), source_type, max_workers, rate_limit)
         
@@ -702,23 +736,48 @@ class SnykTargetMapper:
                 print("✅ All repositories have already been imported to Snyk organizations!")
                 return
         
-        # Apply limit if specified
+        # Filter by source type FIRST (before applying limit)
+        print(f"🔍 Filtering applications by source type: {source_type}")
+        original_count = len(applications)
+        filtered_applications = []
+        for app in applications:
+            app_name = app['application_name']
+            org_id = org_mapping.get(app_name)
+            if not org_id:
+                print(f"⚠️  No organization found for application: {app_name}")
+                continue
+            if not self.should_include_application(app, source_type):
+                continue
+            repository_url = app.get('repository_url', '').strip()
+            if not repository_url:
+                print(f"⚠️  No repository URL for {app_name}")
+                continue
+            filtered_applications.append(app)
+        
+        if not filtered_applications:
+            print("❌ No applications match the source type filter")
+            return
+            
+        filtered_count = len(filtered_applications)
+        print(f"🔍 Filtered to {filtered_count}/{original_count} applications matching {source_type}")
+        
+        # Apply limit AFTER filtering by source type
         if limit and limit > 0:
-            original_count = len(applications)
-            applications = applications[:limit]
-            limited_count = len(applications)
-            print(f"📊 Applying limit: processing {limited_count}/{original_count} repositories (--limit {limit})")
+            pre_limit_count = len(filtered_applications)
+            filtered_applications = filtered_applications[:limit]
+            limited_count = len(filtered_applications)
+            print(f"📊 Applying limit: processing {limited_count}/{pre_limit_count} repositories (--limit {limit})")
         
         # Detect workflow type
-        workflow_type = self.detect_workflow_type(applications)
+        workflow_type = self.detect_workflow_type(filtered_applications)
         print(f"Detected workflow type: {workflow_type}")
         
         # Create targets based on workflow type
         if workflow_type == 'gitlab':
-            targets = self.create_gitlab_targets(applications, org_mapping, source_type, branch_override, files_override, exclusion_globs_override)
+            targets = self.create_gitlab_targets(filtered_applications, org_mapping, source_type, branch_override, files_override, exclusion_globs_override)
         else:
             targets = self.create_general_targets(
-                applications,
+                filtered_applications,
                 org_mapping,
                 source_type,
                 branch_override,
@@ -801,6 +860,7 @@ Examples:
     parser.add_argument('--csv-file', required=True, help='CSV file path')
     parser.add_argument('--orgs-json', required=True, help='Path to organizations JSON file containing org data and integration IDs')
     parser.add_argument('--source', required=True, help='Integration type to use from organizations JSON (github, github-cloud-app, github-enterprise, gitlab, azure-repos)')
+    parser.add_argument('--rows', help='Specific CSV row numbers to process (1-based indexing). Takes precedence over all other filters. Supports individual rows (2,5,8) and ranges (2-5). Example: --rows 2,5-8,10')
     parser.add_argument('--output', help='Output JSON file path (default: import-targets.json)')
     parser.add_argument('--empty-org-only', action='store_true', help='Only process repositories where Organizations column is "N/A" (repositories not yet imported to Snyk)')
     parser.add_argument('--limit', type=int, help='Maximum number of repository targets to process (useful for batching large datasets)')
@@ -822,8 +882,8 @@ Examples:
     # Input validation
     # Sanitize input paths (output path sanitized in safe_write_json)
     try:
-        args.csv_file = sanitize_path(args.csv_file)
-        args.orgs_json = sanitize_path(args.orgs_json)
+        args.csv_file = sanitize_input_path(args.csv_file)
+        args.orgs_json = sanitize_input_path(args.orgs_json)
     except ValueError as ve:
         log_error_and_exit(f"❌ Error: {ve}", logger)
 
@@ -862,7 +922,7 @@ Examples:
         logger.info(perf_msg)
     
     try:
-        mapper.create_targets_json(args.csv_file, output_path, source_type, args.empty_org_only, args.limit, args.branch, args.files, args.exclusion_globs, args.max_workers, args.rate_limit)
+        mapper.create_targets_json(args.csv_file, output_path, source_type, args.empty_org_only, args.limit, args.rows, args.branch, args.files, args.exclusion_globs, args.max_workers, args.rate_limit)
         
         success_msg = f"✅ Phase 2 complete! Use this file to import repositories: {output_path}"
         print(f"\n{success_msg}")

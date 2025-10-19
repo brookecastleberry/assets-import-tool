@@ -22,6 +22,25 @@ def sanitize_path(path: str) -> str:
     return os.path.normpath(path)
 
 
+def sanitize_input_path(path: str) -> str:
+    """
+    Sanitize input file path - allows absolute paths but prevents directory traversal
+    
+    Args:
+        path: File path to sanitize
+        
+    Returns:
+        Normalized safe path
+        
+    Raises:
+        ValueError: If path contains directory traversal attempts
+    """
+    # Allow absolute paths for input files, but prevent directory traversal
+    if '..' in os.path.normpath(path).split(os.sep):
+        raise ValueError(f"Unsafe file path detected (directory traversal): {path}")
+    return os.path.normpath(path)
+
+
 def safe_write_json(data: Dict[str, Any], output_path: str, logger=None) -> None:
     """
     Safely write JSON data to file with comprehensive error handling

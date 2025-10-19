@@ -106,7 +106,7 @@ snyk-api-import orgs:create --file=group-YOUR_GROUP_ID-orgs.json
 
 ```bash
 # Generate import targets with automatic SCM integration and boundary enforcement
-python create_targets_fixed.py --group-id YOUR_GROUP_ID --csv-file assets.csv --orgs-json snyk-created-orgs.json --source github
+python create_targets.py --group-id YOUR_GROUP_ID --csv-file assets.csv --orgs-json ~/snyk-logs/snyk-created-orgs.json --source github
 ```
 
 **Output**: `import-targets.json`

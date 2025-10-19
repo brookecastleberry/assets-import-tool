@@ -72,6 +72,8 @@ Thumbs.db
 data/
 logs/
 *.log
+*.csv
+*.json
 
 # Temporary files
 *.tmp

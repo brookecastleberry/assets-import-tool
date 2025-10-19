@@ -13,9 +13,9 @@ import sys
 import os
 import logging
 from datetime import datetime
-from logging_utils import setup_logging
-from csv_utils import read_applications_from_csv
-from file_utils import sanitize_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_non_empty_string
+from src.logging_utils import setup_logging
+from src.csv_utils import read_applications_from_csv
+from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_non_empty_string
 
 try:
     import pandas as pd
@@ -36,7 +36,7 @@ class SnykOrgCreator:
         Uses centralized CSV parsing (only repositories) - applications with repos need orgs
         """
         # Sanitize path for safety
-        csv_file_path = sanitize_path(csv_file_path)
+        csv_file_path = sanitize_input_path(csv_file_path)
         
         # Use centralized function - only repositories are relevant for org creation
         # (applications without repositories don't need Snyk organizations)
@@ -47,7 +47,7 @@ class SnykOrgCreator:
 
     def create_orgs_json(self, csv_file_path: str, output_json_path: str, source_org_id: str = None):
         # Sanitize CSV path for safety (output path sanitized in safe_write_json)
-        csv_file_path = sanitize_path(csv_file_path)
+        csv_file_path = sanitize_input_path(csv_file_path)
         """
         Create orgs.json file with all unique Application names from CSV
         """
@@ -135,7 +135,7 @@ Examples:
     
     # Sanitize input paths (output path sanitized in safe_write_json)
     try:
-        args.csv_file = sanitize_path(args.csv_file)
+        args.csv_file = sanitize_input_path(args.csv_file)
     except ValueError as ve:
         log_error_and_exit(f"❌ Error: {ve}", logger)
 
