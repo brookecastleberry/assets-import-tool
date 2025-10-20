@@ -31,8 +31,6 @@ The import process follows a 4-step workflow:
 ### Environment Variables
 
 **Required:**
-
-*Standard Authentication:*
 ```bash
 export GITHUB_TOKEN="your_github_personal_access_token"
 export GITLAB_TOKEN="your_gitlab_personal_access_token" 
