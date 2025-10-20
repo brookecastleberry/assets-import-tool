@@ -54,10 +54,12 @@ def display_auth_status(source_type: str):
 
 def make_request_with_retry(url: str, max_retries: int, retry_delay: int, retry_backoff: int, rate_limit_fn, headers: Optional[Dict[str, str]] = None, logger=None, timeout: int = 10) -> Optional[requests.Response]:
 	"""Make HTTP request with exponential backoff retry logic."""
+	# Add verify argument, default True
+	verify = True
 	for attempt in range(max_retries):
 		try:
 			rate_limit_fn()
-			response = requests.get(url, timeout=timeout, headers=headers, verify=False)
+			response = requests.get(url, timeout=timeout, headers=headers, verify=verify)
 			if response.status_code == 200:
 				return response
 			elif response.status_code == 429:

@@ -151,7 +151,11 @@ Examples:
     if not args.output:
         output_path = f"group-{args.group_id}-orgs.json"
     else:
-        output_path = args.output
+        # Sanitize output path for safety
+        try:
+            output_path = sanitize_path(args.output)
+        except ValueError as ve:
+            log_error_and_exit(f"❌ Error: {ve}", logger)
     
     creator = SnykOrgCreator(args.group_id)
     

@@ -6,7 +6,7 @@ A comprehensive tool for importing repositories from various SCM platforms into 
 
 ## 🎯 Overview
 
-This tool provides a complete workflow for importing repositories into Snyk while maintaining organizational boundaries based on your application structure. It integrates with `snyk-api-import` to provide enterprise-scale import capabilities with enhanced authentication and filtering.
+This tool provides a complete workflow for importing repositories into Snyk while maintaining organizational boundaries based on your application structure. It integrates with [`snyk-api-import`](https://github.com/snyk/snyk-api-import) to provide enterprise-scale import capabilities with enhanced authentication and filtering.
 
 ## 🏗️ Architecture
 
@@ -21,6 +21,12 @@ The import process follows a 4-step workflow:
 
 ### Required Files
 - `assets.csv` - Repository inventory with Application column mapping
+
+**To generate the `assets.csv` file:**
+1. Go to your Snyk Group dashboard
+2. Navigate to **Inventory** tab
+3. Select **All Assets**
+4. Click **Export** to download the CSV file
 
 ### Environment Variables
 

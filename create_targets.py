@@ -73,32 +73,58 @@ class SnykTargetMapper:
     
     def should_include_application(self, app: Dict, source_type: str) -> bool:
         """
-        Determine if an application should be included based on its Repository URL and the specified source type
+        Determine if an application should be included based on its Repository URL and Asset Source
+        Uses consistent URL OR Asset Source matching for all SCM types
         """
-        # Get both asset source and repository URL for better filtering
         asset_source = app.get('asset_source', '').lower().strip()
         repository_url = app.get('repository_url', '').lower().strip()
         
-        # For GitHub source types, check both Asset Source and Repository URL
-        if source_type in ['github', 'github-cloud-app', 'github-enterprise']:
-            # Include if repository URL is GitHub or if Asset Source mentions GitHub
-            if 'github.com' in repository_url or 'github' in asset_source:
-                return True
-        
-        # For other source types, use the original logic
-        source_mapping = {
-            'gitlab': ['gitlab'],
-            'azure-repos': ['azure', 'devops']
+        # Unified SCM pattern definitions - consistent for all SCM types
+        scm_patterns = {
+            # GitHub variants (all use same patterns)
+            'github': {
+                'url_patterns': ['github.com'],
+                'source_keywords': ['github']
+            },
+            'github-cloud-app': {
+                'url_patterns': ['github.com'],
+                'source_keywords': ['github']
+            },
+            'github-enterprise': {
+                'url_patterns': ['github.com', 'github.'],  # Handles enterprise domains
+                'source_keywords': ['github']
+            },
+            # GitLab (now checks both URL and source)
+            'gitlab': {
+                'url_patterns': ['gitlab.com', 'gitlab.'],  # Handles self-hosted GitLab
+                'source_keywords': ['gitlab']
+            },
+            # Azure DevOps (now checks both URL and source)
+            'azure-repos': {
+                'url_patterns': ['dev.azure.com', 'visualstudio.com'],  # TFS/VSTS legacy
+                'source_keywords': ['azure', 'devops']
+            }
         }
         
-        keywords = source_mapping.get(source_type, [])
+        # Get patterns for the specified source type
+        patterns = scm_patterns.get(source_type)
+        if not patterns:
+            return False
         
-        # Check if any of the keywords appear in the asset source
-        for keyword in keywords:
-            if keyword in asset_source:
-                return True
+        # Check URL patterns - consistent for all SCM types
+        url_match = any(
+            pattern in repository_url 
+            for pattern in patterns.get('url_patterns', [])
+        )
         
-        return False
+        # Check Asset Source keywords - consistent for all SCM types  
+        source_match = any(
+            keyword in asset_source
+            for keyword in patterns.get('source_keywords', [])
+        )
+        
+        # Unified logic: URL OR Asset Source match (consistent across all SCMs)
+        return url_match or source_match
     
     def _auto_tune_performance(self, repository_count: int, source_type: str, user_max_workers: Optional[int] = None, user_rate_limit: Optional[int] = None):
         """Auto-tune performance settings based on repository count and source type"""
@@ -904,7 +930,14 @@ Examples:
     logger.info(message)
     
     # Generate automatic filename if not provided
-    output_path = args.output if args.output else "import-targets.json"
+    if not args.output:
+        output_path = "import-targets.json"
+    else:
+        # Sanitize output path for safety
+        try:
+            output_path = sanitize_path(args.output)
+        except ValueError as ve:
+            log_error_and_exit(f"❌ Error: {ve}", logger)
     
     mapper = SnykTargetMapper(args.group_id, args.orgs_json)
     
