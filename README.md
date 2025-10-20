@@ -196,7 +196,6 @@ The tool automatically respects SCM platform rate limits:
 
 **Rate Limiting:** Tool defaults are conservative to prevent API throttling
 
-```
 
 ## 📋 CSV File Format
 
