@@ -224,7 +224,9 @@ The script uses the `Asset Source` column to filter repositories by integration 
 ## 🤖 Auto-Detection Features
 
 🤖 **Branch Detection**: Automatically detects default branch via repository APIs
+
 🔍 **GitLab Project ID**: Auto-detects project IDs for GitLab repositories  
+
 ⚡ **Integration Matching**: Smart filtering based on Repository URL OR Asset Source (if either matches the SCM type, it's included)
 
 
