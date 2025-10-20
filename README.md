@@ -62,29 +62,14 @@ This tool creates the following files that are used by `snyk-api-import`:
 
 ## 📝 Logging
 
-Both scripts automatically generate detailed log files in `SNYK_LOG_PATH`:
+Scripts run with clean output by default. Add `--debug` to enable detailed logging in `SNYK_LOG_PATH`:
 
 - **create_orgs.py** → `create_orgs_YYYYMMDD_HHMMSS.log`
-- **create_targets_fixed.py** → `create_targets_YYYYMMDD_HHMMSS.log`
-
-
-The logs capture:
-- Command line arguments and execution start/end
-- CSV parsing results and organization loading
-- HTTP request failures and rate limiting events
-- Error details with full stack traces
-- Performance metrics and auto-tuning decisions
+- **create_targets.py** → `create_targets_YYYYMMDD_HHMMSS.log`
 
 ## ⚠️ Error Handling
 
-Both scripts include robust error handling:
-- All errors are logged with full stack traces and context
-- HTTP/API failures are retried with exponential backoff
-- CSV parsing errors and missing/invalid data are reported in the logs
-- Rate limit events and timeouts are captured and logged
-- The scripts exit with a non-zero status code on fatal errors
-
-Check the log files in your `SNYK_LOG_PATH` for detailed error diagnostics and troubleshooting information.
+Both scripts include robust error handling with automatic retries and clear error messages. Use `--debug` for detailed error diagnostics.
 
 
 ## 🚀 Quick Start
@@ -170,6 +155,20 @@ python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file assets
 - `--output` - Custom output file path (default: `import-targets.json`)
 - `--empty-org-only` - Only process repositories where Organizations column is "N/A" (repositories not yet imported to Snyk)
 - `--limit` - Maximum number of repository targets to process (useful for batching)
+- `--rows` - Specify specific CSV row numbers to process (e.g., `--rows 2,5-8,10` for rows 2, 5-8, and 10)
+
+*Filtering Order of Precedence:*
+When multiple filtering flags are used together, they are applied in this specific order:
+1. **`--rows`** (highest precedence) - First, select only the specified CSV rows
+2. **`--empty-org-only`** - Then, filter out repositories that already have Snyk organizations
+3. **`--source`** - Then, filter by integration type (GitHub, GitLab, etc.)
+4. **`--limit`** (lowest precedence) - Finally, limit the number of results
+
+*Example:* `--rows 1-100 --empty-org-only --source github --limit 5`
+- Processes CSV rows 1-100 (100 repositories)
+- Filters to only empty orgs (maybe 60 repositories remain)  
+- Filters to only GitHub repositories (maybe 30 repositories remain)
+- Limits output to first 5 repositories (final result: 5 repositories)
 
 *Repository Configuration Overrides (applies to all repositories):*
 - `--branch` - Override branch for all repositories (default: auto-detect)
@@ -180,11 +179,17 @@ python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file assets
 - `--max-workers` - Maximum concurrent workers (default: auto-tuned based on repository count)
 - `--rate-limit` - Maximum requests per minute (default: auto-tuned based on source type)
 
+*Debugging & Troubleshooting:*
+- `--debug` - Enable detailed debug logging (API requests, responses, timing, error traces)
+
 **Example:**
 ```bash
-python create_targets_fixed.py --group-id abc123 --csv-file assets.csv --orgs-json group-abc123-orgs.json --source github --branch main --files "package.json" --exclusion-globs "test,spec" --max-workers 20 --rate-limit 100
+python create_targets.py --group-id abc123 --csv-file assets.csv --orgs-json group-abc123-orgs.json --source github --branch main --files "package.json" --exclusion-globs "test,spec" --max-workers 20 --rate-limit 100 --debug
 ```
 
+## 🔍 Debug Logging
+
+Add `--debug` to enable detailed logging for troubleshooting (API requests, timing, error traces). Without it, tools run silently with clean output.
 
 ## ⚡ Performance & Rate Limiting
 
@@ -205,22 +210,6 @@ The tool automatically respects SCM platform rate limits:
 **Rate Limiting:** Tool defaults are conservative to prevent API throttling
 
 ```
-
-## 📊 Performance Comparison
-
-| Repository Count | Traditional (Sequential) | Enterprise (Auto-Tuned) | Time Saved |
-|------------------|-------------------------|-------------------------|------------|
-| 100             | 10-15 minutes           | 2-3 minutes             | 70%        |
-| 1,000           | 100-150 minutes         | 15-20 minutes           | 85%        |
-| 5,000           | 8-12 hours              | 60-90 minutes           | 90%        |
-| 10,000          | 16-24 hours             | 2-3 hours               | 87%        |
-
-*Performance with automatic worker scaling and source-aware rate limiting*
-
-**Auto-Tuning Examples:**
-- **50 repos**: 10 workers, 80 req/min (GitHub)
-- **1,000 repos**: 20 workers, 250 req/min (GitLab)  
-- **5,000 repos**: 40 workers, 150 req/min (Azure DevOps)
 
 ## 📋 CSV File Format
 
@@ -257,7 +246,7 @@ WebApp,Repository,Frontend,https://dev.azure.com/company/project/_git/webapp,Azu
 
 🤖 **Branch Detection**: Automatically detects default branch via repository APIs
 🔍 **GitLab Project ID**: Auto-detects project IDs for GitLab repositories  
-⚡ **Integration Matching**: Smart filtering based on Asset Source keywords
+⚡ **Integration Matching**: Smart filtering based on Repository URL OR Asset Source (if either matches the SCM type, it's included)
 
 
 ## 🔗 Integration Types

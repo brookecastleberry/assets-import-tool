@@ -13,7 +13,7 @@ import sys
 import os
 import logging
 from datetime import datetime
-from src.logging_utils import setup_logging
+from src.logging_utils import setup_logging, log_progress, log_error_with_context
 from src.csv_utils import read_applications_from_csv
 from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_non_empty_string
 
@@ -125,11 +125,12 @@ Examples:
     parser.add_argument('--csv-file', required=True, help='CSV file path')
     parser.add_argument('--source-org-id', help='Source organization ID to copy settings from')
     parser.add_argument('--output', help='Output JSON file path (default: group-{GROUP_ID}-orgs.json)')
+    parser.add_argument('--debug', action='store_true', help='Enable detailed debug logging')
     
     args = parser.parse_args()
     
-    # Initialize logging early
-    logger = setup_logging('create_orgs')
+    # Initialize logging early with debug support
+    logger = setup_logging('create_orgs', debug=args.debug)
     logger.info("=== Starting create_orgs.py ===")
     logger.info(f"Command line arguments: {vars(args)}")
     

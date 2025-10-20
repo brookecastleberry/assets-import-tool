@@ -3,6 +3,7 @@ import time
 import requests
 import base64
 from typing import Dict, Optional
+from .logging_utils import log_api_request, log_api_response, log_retry_attempt, log_error_with_context
 
 def rate_limit(request_lock, last_request_time, request_interval):
 	"""Apply rate limiting to API requests."""
@@ -53,46 +54,70 @@ def display_auth_status(source_type: str):
 	print()
 
 def make_request_with_retry(url: str, max_retries: int, retry_delay: int, retry_backoff: int, rate_limit_fn, headers: Optional[Dict[str, str]] = None, logger=None, timeout: int = 10) -> Optional[requests.Response]:
-	"""Make HTTP request with exponential backoff retry logic."""
-	# Add verify argument, default True
+	"""Make HTTP request with exponential backoff retry logic and detailed logging."""
+	# Log the initial request details
+	if logger:
+		log_api_request(logger, 'GET', url, headers)
+	
 	verify = True
 	for attempt in range(max_retries):
 		try:
 			rate_limit_fn()
+			
+			# Track response time
+			start_time = time.time()
 			response = requests.get(url, timeout=timeout, headers=headers, verify=verify)
+			response_time = time.time() - start_time
+			
+			# Log response details
+			if logger:
+				response_size = len(response.content) if response.content else None
+				log_api_response(logger, response.status_code, url, response_time, response_size)
+			
 			if response.status_code == 200:
+				if logger:
+					logger.debug(f"✅ Successful API call to {url}")
 				return response
 			elif response.status_code == 429:
 				wait_time = retry_delay * (retry_backoff ** attempt) * 2
-				warning_msg = f"⚠️  Rate limit hit for {url}, waiting {wait_time}s before retry {attempt + 1}/{max_retries}"
-				print(warning_msg)
+				warning_msg = f"Rate limit hit for {url}, waiting {wait_time}s before retry {attempt + 1}/{max_retries}"
+				print(f"⚠️  {warning_msg}")
 				if logger:
-					logger.warning(warning_msg)
+					log_retry_attempt(logger, attempt + 1, max_retries, url, wait_time)
+					logger.debug(f"Rate limit response body: {response.text[:200]}...")
 				time.sleep(wait_time)
 				continue
 			elif 400 <= response.status_code < 500:
-				error_msg = f"⚠️  Client error {response.status_code} for {url}, not retrying"
-				print(error_msg)
+				error_msg = f"Client error {response.status_code} for {url}, not retrying"
+				print(f"⚠️  {error_msg}")
 				if logger:
-					logger.error(error_msg)
+					log_error_with_context(logger, f"Client error {response.status_code} for {url}")
+					logger.debug(f"Error response body: {response.text[:500]}...")
 				return None
 			elif response.status_code >= 500:
 				wait_time = retry_delay * (retry_backoff ** attempt)
-				warning_msg = f"⚠️  Server error {response.status_code} for {url}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
-				print(warning_msg)
+				warning_msg = f"Server error {response.status_code} for {url}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
+				print(f"⚠️  {warning_msg}")
 				if logger:
-					logger.warning(warning_msg)
+					log_retry_attempt(logger, attempt + 1, max_retries, url, wait_time)
+					logger.debug(f"Server error response body: {response.text[:200]}...")
 				if attempt < max_retries - 1:
 					time.sleep(wait_time)
 				continue
 		except requests.exceptions.RequestException as e:
 			wait_time = retry_delay * (retry_backoff ** attempt)
-			error_msg = f"⚠️  Request exception for {url}: {e}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
-			print(error_msg)
+			error_msg = f"Request exception for {url}: {e}, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})"
+			print(f"⚠️  {error_msg}")
 			if logger:
-				logger.error(error_msg)
+				log_error_with_context(logger, f"Request exception for {url}", e)
+				if attempt + 1 <= max_retries:
+					log_retry_attempt(logger, attempt + 1, max_retries, url, wait_time)
 			if attempt < max_retries - 1:
 				time.sleep(wait_time)
 			continue
-	print(f"❌ Failed to fetch {url} after {max_retries} attempts")
+	
+	error_msg = f"Failed to fetch {url} after {max_retries} attempts"
+	print(f"❌ {error_msg}")
+	if logger:
+		log_error_with_context(logger, error_msg)
 	return None

@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import logging
 from datetime import datetime
-from src.logging_utils import setup_logging
+from src.logging_utils import setup_logging, log_progress, log_error_with_context
 from src.csv_utils import read_applications_from_csv
 from src.api import rate_limit, get_auth_headers, display_auth_status, make_request_with_retry
 from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_positive_integer
@@ -127,55 +127,84 @@ class SnykTargetMapper:
         return url_match or source_match
     
     def _auto_tune_performance(self, repository_count: int, source_type: str, user_max_workers: Optional[int] = None, user_rate_limit: Optional[int] = None):
-        """Auto-tune performance settings based on repository count and source type"""
+        """Auto-tune performance settings based on repository count and source type with detailed logging"""
+        
+        if self.logger:
+            self.logger.debug(f"🔧 Starting auto-tuning for {repository_count} repositories, source: {source_type}")
+            self.logger.debug(f"   User overrides - max_workers: {user_max_workers}, rate_limit: {user_rate_limit}")
         
         # Auto-tune max workers based on repository count
         if user_max_workers is not None:
             self.max_workers = user_max_workers
             print(f"🔧 Using user-specified max workers: {self.max_workers}")
+            if self.logger:
+                self.logger.info(f"Using user-specified max workers: {self.max_workers}")
         else:
             # More aggressive defaults - we're generating import data, not calling SCM APIs heavily
             if repository_count <= 100:
                 self.max_workers = 10
+                tuning_reason = "Small dataset (≤100 repos)"
             elif repository_count <= 500:
                 self.max_workers = 20
+                tuning_reason = "Medium dataset (≤500 repos)"
             elif repository_count <= 2000:
                 self.max_workers = 30
+                tuning_reason = "Large dataset (≤2000 repos)"
             elif repository_count <= 5000:
                 self.max_workers = 40
+                tuning_reason = "Very large dataset (≤5000 repos)"
             else:
                 self.max_workers = 50
+                tuning_reason = "Extremely large dataset (>5000 repos)"
+            
             print(f"🎯 Auto-tuned max workers for {repository_count} repositories: {self.max_workers}")
+            if self.logger:
+                self.logger.info(f"Auto-tuned max workers: {self.max_workers} ({tuning_reason})")
+                self.logger.debug(f"   Worker tuning logic: {repository_count} repos → {self.max_workers} workers")
         
         # Auto-tune rate limiting based on source type and repository count
         if user_rate_limit is not None:
             self.rate_limit_requests_per_minute = user_rate_limit
             print(f"🔧 Using user-specified rate limit: {self.rate_limit_requests_per_minute} requests/minute")
+            if self.logger:
+                self.logger.info(f"Using user-specified rate limit: {self.rate_limit_requests_per_minute} requests/minute")
         else:
             # More aggressive rate limits since we're only making occasional API calls
             if 'github' in source_type:
                 # GitHub: 5000 requests/hour = 83/minute, use 80 for aggressive performance
                 base_rate = 80
+                rate_reason = "GitHub API limits (5000/hour, using 80/min for safety)"
             elif 'gitlab' in source_type:
                 # GitLab: 300 requests/minute, use 250 for aggressive performance
                 base_rate = 250
+                rate_reason = "GitLab API limits (300/min, using 250/min for safety)"
             elif 'azure' in source_type:
                 # Azure DevOps: Aggressive estimate
                 base_rate = 150
+                rate_reason = "Azure DevOps estimated limits (using 150/min)"
             else:
                 # Unknown source, still be more aggressive
                 base_rate = 60
+                rate_reason = "Unknown source type (conservative 60/min)"
             
             # Only scale down rate limit for extremely large repository counts
             if repository_count > 10000:
                 self.rate_limit_requests_per_minute = int(base_rate * 0.8)  # 20% reduction
+                scale_reason = "Scaled down 20% for >10k repositories"
             else:
                 self.rate_limit_requests_per_minute = base_rate
+                scale_reason = "No scaling needed"
             
             print(f"🎯 Auto-tuned rate limit for {source_type} with {repository_count} repositories: {self.rate_limit_requests_per_minute} requests/minute")
+            if self.logger:
+                self.logger.info(f"Auto-tuned rate limit: {self.rate_limit_requests_per_minute} requests/minute")
+                self.logger.debug(f"   Rate limit reasoning: {rate_reason}")
+                self.logger.debug(f"   Scaling applied: {scale_reason}")
         
         # Recalculate request interval
         self.request_interval = 60.0 / self.rate_limit_requests_per_minute
+        if self.logger:
+            self.logger.debug(f"   Calculated request interval: {self.request_interval:.3f} seconds between requests")
         
         # Show performance summary
         estimated_time_minutes = (repository_count / self.max_workers) * 0.1  # Much faster estimate: 0.1 min per repo per worker
@@ -184,6 +213,10 @@ class SnykTargetMapper:
         print(f"   • Concurrent Workers: {self.max_workers}")
         print(f"   • Rate Limit: {self.rate_limit_requests_per_minute} requests/minute")
         print(f"   • Estimated Time: {estimated_time_minutes:.0f}-{estimated_time_minutes*2:.0f} minutes")
+        
+        if self.logger:
+            self.logger.info(f"Performance auto-tuning completed: {self.max_workers} workers, {self.rate_limit_requests_per_minute} req/min")
+            self.logger.debug(f"   Performance metrics - Est. time: {estimated_time_minutes:.1f}-{estimated_time_minutes*2:.1f} min, Request interval: {self.request_interval:.3f}s")
         
         # Add performance tip
         if repository_count > 1000:
@@ -619,20 +652,55 @@ class SnykTargetMapper:
         targets = []
         total_repos = len(repositories)
         print(f"🚀 Processing {total_repos} repositories with {max_workers} concurrent workers...")
+        
+        if self.logger:
+            self.logger.info(f"Starting parallel processing: {total_repos} repositories, {max_workers} workers")
+            self.logger.debug(f"Processing configuration: timeout=60s, rate_limit={self.rate_limit_requests_per_minute}/min")
+        
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(process_single_repository, app) for app in repositories]
             completed = 0
-            for future in futures:
+            errors = 0
+            
+            for i, future in enumerate(futures):
                 try:
                     result = future.result(timeout=60)
                     if result:
                         targets.append(result)
+                        if self.logger:
+                            app_name = repositories[i].get('application_name', f'repo-{i+1}')
+                            self.logger.debug(f"✅ Successfully processed {app_name} (target created)")
+                    else:
+                        if self.logger:
+                            app_name = repositories[i].get('application_name', f'repo-{i+1}')
+                            self.logger.debug(f"⚪ Processed {app_name} (no target created - filtered or error)")
+                    
                     completed += 1
+                    
+                    # Progress logging - more frequent in debug mode
                     if completed % 100 == 0 or completed == total_repos:
                         print(f"📊 Progress: {completed}/{total_repos} repositories processed ({len(targets)} targets created)")
+                        if self.logger:
+                            log_progress(self.logger, completed, total_repos, "repository")
+                    elif completed % 25 == 0 and self.logger:
+                        # Debug-only frequent progress updates
+                        log_progress(self.logger, completed, total_repos, "repository")
+                        
                 except Exception as e:
-                    print(f"❌ Repository processing failed: {e}")
+                    errors += 1
                     completed += 1
+                    error_msg = f"Repository processing failed: {e}"
+                    print(f"❌ {error_msg}")
+                    
+                    if self.logger:
+                        app_name = repositories[i].get('application_name', f'repo-{i+1}') if i < len(repositories) else 'unknown'
+                        log_error_with_context(self.logger, f"Processing failed for {app_name}", e)
+        
+        if self.logger:
+            self.logger.info(f"Parallel processing completed: {len(targets)} targets created, {errors} errors")
+            if errors > 0:
+                self.logger.warning(f"Processing completed with {errors} errors out of {total_repos} repositories")
+        
         return targets
 
     def create_general_targets(self, applications: List[Dict], org_mapping: Dict[str, str], source_type: str, branch_override: Optional[str], files_override: Optional[str], exclusion_globs_override: Optional[str], max_workers: int) -> List[Dict]:
@@ -898,10 +966,13 @@ Examples:
     parser.add_argument('--max-workers', type=int, help='Maximum number of concurrent workers for API requests (default: auto-tuned based on repository count)')
     parser.add_argument('--rate-limit', type=int, help='Maximum requests per minute for API calls (default: auto-tuned based on source type and repository count)')
     
+    # Debugging options
+    parser.add_argument('--debug', action='store_true', help='Enable detailed debug logging (API requests, responses, timing, and error traces)')
+    
     args = parser.parse_args()
 
-    # Setup logging
-    logger = setup_logging('create_targets')
+    # Setup logging with debug support
+    logger = setup_logging('create_targets', debug=args.debug)
     logger.info("=== Starting create_targets ===")
     logger.info(f"Command line arguments: {vars(args)}")
 
