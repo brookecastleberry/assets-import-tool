@@ -55,21 +55,6 @@ class SnykTargetMapper:
         self.retry_delay = 1  # Initial delay in seconds
         self.retry_backoff = 2  # Exponential backoff multiplier
     
-    def detect_workflow_type(self, applications: List[Dict]) -> str:
-        """
-        Detect which workflow to use based on CSV content
-        """
-        # Check for GitLab repository URLs
-        has_gitlab_repos = any(
-            app.get('repository_url') and 
-            'gitlab' in str(app.get('repository_url', '')).lower()
-            for app in applications
-        )
-        
-        if has_gitlab_repos:
-            return 'gitlab'
-        else:
-            return 'general'
     
     def should_include_application(self, app: Dict, source_type: str) -> bool:
         """
@@ -322,7 +307,7 @@ class SnykTargetMapper:
         """
         display_auth_status(getattr(self, 'source_type', 'github'))
 
-    def get_default_branch(self, repository_url: str) -> Optional[str]:
+    def get_default_branch(self, repository_url: str, source_type: str) -> Optional[str]:
         """
         Fetch the default branch for a repository from its API
         Returns None if unable to determine
@@ -330,17 +315,18 @@ class SnykTargetMapper:
         try:
             if repository_url.endswith('.git'):
                 repository_url = repository_url[:-4]
-            if 'github.com' in repository_url and self.source_type in ['github', 'github-cloud-app', 'github-enterprise']:
+            # Repositories already filtered by should_include_application(), just use source type
+            if source_type in ['github', 'github-cloud-app', 'github-enterprise']:
                 match = re.search(r'github\.com[/:]([^/]+)/([^/]+?)/?$', repository_url)
                 if match:
                     owner, repo = match.groups()
                     api_url = f"https://api.github.com/repos/{owner}/{repo}"
-                    auth_headers = get_auth_headers('github', self.source_type, self.logger)
+                    auth_headers = get_auth_headers('github', source_type, self.logger)
                     response = make_request_with_retry(api_url, self.max_retries, self.retry_delay, self.retry_backoff, lambda: self._rate_limit_wrapper(), headers=auth_headers, logger=self.logger)
                     if response and response.status_code == 200:
                         repo_data = response.json()
                         return repo_data.get('default_branch', 'main')
-            elif ('gitlab.com' in repository_url or 'gitlab' in repository_url.lower()) and self.source_type == 'gitlab':
+            elif source_type == 'gitlab':
                 project_path = None
                 api_base = None
                 if 'gitlab.com' in repository_url:
@@ -361,7 +347,7 @@ class SnykTargetMapper:
                 if project_path and api_base:
                     encoded_path = requests.utils.quote(project_path, safe='')
                     api_url = f"{api_base}/projects/{encoded_path}"
-                    auth_headers = get_auth_headers('gitlab', self.source_type, self.logger)
+                    auth_headers = get_auth_headers('gitlab', source_type, self.logger)
                     response = make_request_with_retry(api_url, self.max_retries, self.retry_delay, self.retry_backoff, lambda: self._rate_limit_wrapper(), headers=auth_headers, logger=self.logger)
                     if response and response.status_code == 200:
                         project_data = response.json()
@@ -375,18 +361,16 @@ class SnykTargetMapper:
                     elif response and response.status_code in [401, 403]:
                         print(f"⚠️  GitLab authentication issue for {repository_url} (check GITLAB_TOKEN)")
                         return 'main'
-            elif 'dev.azure.com' in repository_url and self.source_type == 'azure-repos':
-                auth_headers = get_auth_headers('azure', self.source_type, self.logger)
-                if auth_headers:
-                    match = re.search(r'dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/]+)', repository_url)
-                    if match:
-                        organization, project, repo = match.groups()
-                        api_url = f"https://dev.azure.com/{organization}/{project}/_apis/git/repositories/{repo}?api-version=6.0"
-                        response = make_request_with_retry(api_url, self.max_retries, self.retry_delay, self.retry_backoff, lambda: self._rate_limit_wrapper(), headers=auth_headers, logger=self.logger)
-                        if response and response.status_code == 200:
-                            repo_data = response.json()
-                            return repo_data.get('defaultBranch', 'refs/heads/main').replace('refs/heads/', '')
-                return 'main'
+            elif source_type == 'azure-repos':
+                match = re.search(r'dev\.azure\.com/([^/]+)/([^/]+)/_git/([^/]+)', repository_url)
+                if match:
+                    organization, project, repo = match.groups()
+                    api_url = f"https://dev.azure.com/{organization}/{project}/_apis/git/repositories/{repo}?api-version=6.0"
+                    auth_headers = get_auth_headers('azure', source_type, self.logger)
+                    response = make_request_with_retry(api_url, self.max_retries, self.retry_delay, self.retry_backoff, lambda: self._rate_limit_wrapper(), headers=auth_headers, logger=self.logger)
+                    if response and response.status_code == 200:
+                        repo_data = response.json()
+                        return repo_data.get('defaultBranch', 'refs/heads/main').replace('refs/heads/', '')
             return 'main'
         except Exception as e:
             print(f"⚠️  Could not determine default branch for {repository_url}: {e}")
@@ -399,14 +383,14 @@ class SnykTargetMapper:
             self._last_request_time_ref = [self.last_request_time]
         rate_limit(self.request_lock, self._last_request_time_ref, self.request_interval)
     
-    def get_gitlab_project_info(self, repository_url: str) -> Optional[Dict]:
+    def get_gitlab_project_info(self, repository_url: str, source_type: str) -> Optional[Dict]:
         """
         Fetch GitLab project information including project ID and default branch
         Returns dict with 'id' and 'default_branch' or None if unable to determine
         """
         try:
             # Only make API calls if source is GitLab
-            if not hasattr(self, 'source_type') or self.source_type != 'gitlab':
+            if source_type != 'gitlab':
                 return None
                 
             # Remove .git suffix if present
@@ -445,7 +429,7 @@ class SnykTargetMapper:
                     api_url = f"{api_base}/projects/{encoded_path}"
                     
                     # Get authentication headers if available
-                    auth_headers = get_auth_headers('gitlab', self.source_type, self.logger)
+                    auth_headers = get_auth_headers('gitlab', source_type, self.logger)
                     
                     if auth_headers:
                         print(f"🔐 Using GitLab authentication for project: {project_path}")
@@ -516,7 +500,7 @@ class SnykTargetMapper:
             project_id = None
             detected_default_branch = None
             
-            gitlab_info = self.get_gitlab_project_info(repository_url)
+            gitlab_info = self.get_gitlab_project_info(repository_url, source_type)
             if gitlab_info and gitlab_info.get('id'):
                 project_id = gitlab_info['id']
                 detected_default_branch = gitlab_info.get('default_branch')
@@ -545,7 +529,7 @@ class SnykTargetMapper:
                 print(f"📋 Using GitLab default branch '{detected_default_branch}' for {app_name}")
             else:
                 # Fallback to detecting branch separately
-                default_branch = self.get_default_branch(repository_url)
+                default_branch = self.get_default_branch(repository_url, source_type)
                 if default_branch:
                     target["target"]["branch"] = default_branch
                     print(f"📋 Auto-detected default branch '{default_branch}' for {app_name}")
@@ -628,7 +612,7 @@ class SnykTargetMapper:
                     target["target"]["branch"] = branch_override
                     print(f"📋 Using override branch '{branch_override}' for {app_name}")
                 else:
-                    default_branch = self.get_default_branch(repository_url)
+                    default_branch = self.get_default_branch(repository_url, source_type)
                     if default_branch:
                         target["target"]["branch"] = default_branch
                         print(f"📋 Auto-detected default branch '{default_branch}' for {app_name}")
@@ -862,12 +846,8 @@ class SnykTargetMapper:
             limited_count = len(filtered_applications)
             print(f"📊 Applying limit: processing {limited_count}/{pre_limit_count} repositories (--limit {limit})")
         
-        # Detect workflow type
-        workflow_type = self.detect_workflow_type(filtered_applications)
-        print(f"Detected workflow type: {workflow_type}")
-        
-        # Create targets based on workflow type
-        if workflow_type == 'gitlab':
+        # Create targets based on source type
+        if source_type == 'gitlab':
             targets = self.create_gitlab_targets(filtered_applications, org_mapping, source_type, branch_override, files_override, exclusion_globs_override)
         else:
             targets = self.create_general_targets(
@@ -905,49 +885,7 @@ class SnykTargetMapper:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Create Snyk import targets from CSV file (Phase 2) - Enterprise optimized with auto-tuning",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-🚀 Enterprise Auto-Tuning:
-  Performance settings are automatically optimized based on your repository count
-  and source type. No manual tuning required for optimal performance!
-  
-  Auto-tuning provides:
-  - Optimal concurrent workers (5-20 based on repository count)
-  - Safe API rate limits (based on GitHub/GitLab/Azure limits)
-  - Progress reporting and error handling
-  
-Integration Type Strategy:
-  The --source parameter specifies which integration type to use from your 
-  organizations JSON file. This must match an integration type that exists 
-  in your snyk-created-orgs.json file.
-  
-  Common integration types:
-  - github: For GitHub.com repositories (auto-tuned: 60 req/min)
-  - github-cloud-app: For GitHub Cloud App integration  
-  - github-enterprise: For GitHub Enterprise repositories  
-  - gitlab: For GitLab repositories (auto-tuned: 200 req/min)
-  - azure-repos: For Azure DevOps repositories (auto-tuned: 100 req/min)
-
-Examples:
-  # Basic usage - auto-tuned for optimal performance
-  python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github
-  
-  # Enterprise scale (10,000+ repos) - still auto-tuned
-  python create_targets.py --group-id abc123 --csv-file large-dataset.csv --orgs-json snyk-created-orgs.json --source github
-  
-  # Custom performance tuning (optional)
-  python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github --max-workers 25 --rate-limit 30
-  
-  # Override files for all repositories (scan only specific files)
-  python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github --files "package.json,requirements.txt"
-  
-  # Override exclusionGlobs for all repositories  
-  python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github --exclusion-globs "test,spec,node_modules"
-  
-  # No exclusions (empty string)
-  python create_targets.py --group-id abc123 --csv-file mydata.csv --orgs-json snyk-created-orgs.json --source github --exclusion-globs ""
-        """
+        description="Create Snyk import targets from CSV file (Phase 2)"
     )
     
     parser.add_argument('--group-id', required=True, help='Snyk Group ID')
