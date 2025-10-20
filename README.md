@@ -56,21 +56,9 @@ npm install -g snyk-api-import
 This tool creates the following files that are used by `snyk-api-import`:
 
 - `group-{GROUP_ID}-orgs.json` - Snyk organization structure (from `create_orgs.py`)
-- `import-targets.json` - Repository import targets (from `create_targets_fixed.py`)
+- `import-targets.json` - Repository import targets (from `create_targets.py`)
 
 *Note: Both output filenames can be customized using the `--output` parameter.*
-
-## 📝 Logging
-
-Scripts run with clean output by default. Add `--debug` to enable detailed logging in `SNYK_LOG_PATH`:
-
-- **create_orgs.py** → `create_orgs_YYYYMMDD_HHMMSS.log`
-- **create_targets.py** → `create_targets_YYYYMMDD_HHMMSS.log`
-
-## ⚠️ Error Handling
-
-Both scripts include robust error handling with automatic retries and clear error messages. Use `--debug` for detailed error diagnostics.
-
 
 ## 🚀 Quick Start
 
@@ -135,13 +123,14 @@ python create_targets_fixed.py \
 **Optional Flags:**
 - `--source-org-id` - Source organization ID to copy settings from (recommended for consistent configuration)
 - `--output` - Custom output file path (default: `group-{GROUP_ID}-orgs.json`)
+- `--debug` - Enable detailed debug logging
 
 **Example:**
 ```bash
-python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file assets.csv --output my-orgs.json
+python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file assets.csv --output my-orgs.json --debug
 ```
 
-### create_targets_fixed.py - Import Targets Generator
+### create_targets.py - Import Targets Generator
 
 **Required Flags:**
 - `--group-id` - Snyk Group ID where repositories will be imported
@@ -155,7 +144,7 @@ python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file assets
 - `--output` - Custom output file path (default: `import-targets.json`)
 - `--empty-org-only` - Only process repositories where Organizations column is "N/A" (repositories not yet imported to Snyk)
 - `--limit` - Maximum number of repository targets to process (useful for batching)
-- `--rows` - Specify specific CSV row numbers to process (e.g., `--rows 2,5-8,10` for rows 2, 5-8, and 10)
+- `--rows` - Specify CSV row numbers to process (e.g., `--rows 2,5-8,10` for rows 2, 5-8, and 10)
 
 *Filtering Order of Precedence:*
 When multiple filtering flags are used together, they are applied in this specific order:
@@ -234,13 +223,6 @@ The script uses the `Asset Source` column to filter repositories by integration 
 | `gitlab`         | "gitlab"                     |
 | `azure-repos`    | "azure", "devops"           |
 
-Example CSV:
-```csv
-Application,Type,Asset,Repository URL,Asset Source
-MyApp,Repository,Backend Service,https://github.com/company/myapp,GitHub Enterprise
-DataPipe,Repository,Data Pipeline,https://gitlab.com/company/data,GitLab SaaS
-WebApp,Repository,Frontend,https://dev.azure.com/company/project/_git/webapp,Azure DevOps
-```
 
 ## 🤖 Auto-Detection Features
 
