@@ -20,9 +20,9 @@ The import process follows a 4-step workflow:
 ## 📋 Prerequisites
 
 ### Required Files
-- `assets.csv` - Repository inventory with Application column mapping
+- `all_assets.csv` - Repository inventory with Application column mapping
 
-**To generate the `assets.csv` file:**
+**To generate the `all_assets.csv` file:**
 1. Go to your Snyk Group dashboard
 2. Navigate to **Inventory** tab
 3. Select **All Assets**
@@ -49,6 +49,12 @@ pip install -r requirements.txt
 npm install -g snyk-api-import
 ```
 
+### Corporate Networks & SSL (Optional)
+**Only needed if you get SSL errors**: If you're behind a corporate network with SSL inspection, set:
+```bash
+export REQUESTS_CA_BUNDLE=/path/to/your/corporate-ca-bundle.pem
+```
+
 ## 📄 Generated Files
 
 This tool creates the following files that are used by `snyk-api-import`:
@@ -64,7 +70,7 @@ This tool creates the following files that are used by `snyk-api-import`:
 
 ```bash
 # Generate Snyk organization structure from your CSV data
-python create_orgs.py --group-id YOUR_GROUP_ID --source-org-id YOUR_SOURCE_ORG_ID --csv-file assets.csv
+python create_orgs.py --group-id YOUR_GROUP_ID --source-org-id YOUR_SOURCE_ORG_ID --csv-file /path/to/all_assets.csv
 ```
 
 
@@ -79,11 +85,13 @@ python create_orgs.py --group-id YOUR_GROUP_ID --source-org-id YOUR_SOURCE_ORG_I
 snyk-api-import orgs:create --file=group-YOUR_GROUP_ID-orgs.json
 ```
 
+**Output**: `~/snyk-logs/snyk-created-orgs.json` (created by snyk-api-import)
+
 ### Step 3: Generate Import Targets
 
 ```bash
 # Generate import targets with automatic SCM integration and boundary enforcement
-python create_targets.py --group-id YOUR_GROUP_ID --csv-file assets.csv --orgs-json ~/snyk-logs/snyk-created-orgs.json --source github
+python create_targets.py --group-id YOUR_GROUP_ID --csv-file /path/to/all_assets.csv --orgs-json ~/snyk-logs/snyk-created-orgs.json --source github
 ```
 
 **Output**: `import-targets.json`
@@ -116,7 +124,7 @@ python create_targets_fixed.py \
 
 **Required Flags:**
 - `--group-id` - Snyk Group ID where organizations will be created
-- `--csv-file` - Path to CSV file containing Application data
+- `--csv-file` - Full path to CSV file containing Application data (e.g., `/path/to/all_assets.csv`)
 
 **Optional Flags:**
 - `--source-org-id` - Source organization ID to copy settings from (recommended for consistent configuration)
@@ -125,14 +133,14 @@ python create_targets_fixed.py \
 
 **Example:**
 ```bash
-python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file assets.csv --output my-orgs.json --debug
+python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file /path/to/all_assets.csv --output my-orgs.json --debug
 ```
 
 ### create_targets.py - Import Targets Generator
 
 **Required Flags:**
 - `--group-id` - Snyk Group ID where repositories will be imported
-- `--csv-file` - Path to CSV file containing repository data
+- `--csv-file` - Full path to CSV file containing repository data (e.g., `/path/to/all_assets.csv`)
 - `--orgs-json` - Path to snyk-created-orgs.json 
 - `--source` - Integration type (one at a time): `github`, `github-cloud-app`, `github-enterprise`, `gitlab`, `azure-repos`
 
@@ -171,7 +179,7 @@ When multiple filtering flags are used together, they are applied in this specif
 
 **Example:**
 ```bash
-python create_targets.py --group-id abc123 --csv-file assets.csv --orgs-json group-abc123-orgs.json --source github --branch main --files "package.json" --exclusion-globs "test,spec" --max-workers 20 --rate-limit 100 --debug
+python create_targets.py --group-id abc123 --csv-file /path/to/all_assets.csv --orgs-json ~/snyk-logs/snyk-created-orgs.json   --source github --branch main --files "package.json" --exclusion-globs "test,spec" --max-workers 20 --rate-limit 100 --debug
 ```
 
 ## 🔍 Debug Logging

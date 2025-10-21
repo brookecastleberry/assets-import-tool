@@ -75,6 +75,10 @@ logs/
 *.csv
 *.json
 
+# SSL Certificates (just in case someone accidentally copies one here)
+*.pem
+*.crt
+
 # Temporary files
 *.tmp
 *.temp

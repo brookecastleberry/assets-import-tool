@@ -58,15 +58,13 @@ def make_request_with_retry(url: str, max_retries: int, retry_delay: int, retry_
 	# Log the initial request details
 	if logger:
 		log_api_request(logger, 'GET', url, headers)
-	
-	verify = True
 	for attempt in range(max_retries):
 		try:
 			rate_limit_fn()
 			
 			# Track response time
 			start_time = time.time()
-			response = requests.get(url, timeout=timeout, headers=headers, verify=verify)
+			response = requests.get(url, timeout=timeout, headers=headers)
 			response_time = time.time() - start_time
 			
 			# Log response details
