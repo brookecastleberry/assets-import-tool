@@ -5,30 +5,18 @@ This script reads Application names from a CSV file and creates a JSON file
 with organizations that need to be created in Snyk.
 """
 
-import json
-import csv
 from typing import Dict, List
 import argparse
 import sys
-import os
-import logging
-from datetime import datetime
-from src.logging_utils import setup_logging, log_progress, log_error_with_context
+from src.logging_utils import setup_logging
 from src.csv_utils import read_applications_from_csv
 from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_non_empty_string
 
-try:
-    import pandas as pd
-    PANDAS_AVAILABLE = True
-except ImportError:
-    PANDAS_AVAILABLE = False
-    print("Warning: pandas not available, using basic CSV parsing")
-
 
 class SnykOrgCreator:
-    def __init__(self, group_id: str):
+    def __init__(self, group_id: str, debug: bool = False):
         self.group_id = group_id
-        self.logger = setup_logging('create_orgs')
+        self.logger = setup_logging('create_orgs', debug=debug)
     
     def read_applications_from_csv(self, csv_file_path: str) -> List[Dict]:
         """
@@ -158,7 +146,7 @@ Examples:
         except ValueError as ve:
             log_error_and_exit(f"❌ Error: {ve}", logger)
     
-    creator = SnykOrgCreator(args.group_id)
+    creator = SnykOrgCreator(args.group_id, debug=args.debug)
     
     message = f"Creating organizations file: {output_path}"
     print(message)

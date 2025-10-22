@@ -6,19 +6,13 @@ and automatically detecting the appropriate integration types.
 """
 
 import json
-import csv
-import io
 from typing import Dict, List, Optional
 import argparse
 import sys
-import os
 import requests
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor
 import threading
-import logging
-from datetime import datetime
 from src.logging_utils import setup_logging, log_progress, log_error_with_context
 from src.csv_utils import read_applications_from_csv
 from src.api import rate_limit, get_auth_headers, display_auth_status, make_request_with_retry
@@ -38,11 +32,35 @@ except ImportError:
 
 
 class SnykTargetMapper:
-    def __init__(self, group_id: str, orgs_json_file: str = "snyk-created-orgs.json"):
+    # SCM pattern definitions for filtering applications
+    SCM_PATTERNS = {
+        'github': {
+            'url_patterns': ['github.com'],
+            'source_keywords': ['github']
+        },
+        'github-cloud-app': {
+            'url_patterns': ['github.com'],
+            'source_keywords': ['github']
+        },
+        'github-enterprise': {
+            'url_patterns': ['github.com', 'github.'],
+            'source_keywords': ['github']
+        },
+        'gitlab': {
+            'url_patterns': ['gitlab.com', 'gitlab.'],
+            'source_keywords': ['gitlab']
+        },
+        'azure-repos': {
+            'url_patterns': ['dev.azure.com', 'visualstudio.com'],
+            'source_keywords': ['azure', 'devops']
+        }
+    }
+
+    def __init__(self, group_id: str, orgs_json_file: str = "snyk-created-orgs.json", debug: bool = False):
         self.group_id = group_id
         self.orgs_json_file = orgs_json_file
         self.org_data = None
-        self.logger = setup_logging('create_targets')
+        self.logger = setup_logging('create_targets', debug=debug)
         # Rate limiting configuration - auto-tune based on repository count
         self.rate_limit_requests_per_minute = 1000  # Will be auto-tuned
         self.request_interval = 60.0 / self.rate_limit_requests_per_minute  # Will be recalculated
@@ -55,7 +73,6 @@ class SnykTargetMapper:
         self.retry_delay = 1  # Initial delay in seconds
         self.retry_backoff = 2  # Exponential backoff multiplier
     
-    
     def should_include_application(self, app: Dict, source_type: str) -> bool:
         """
         Determine if an application should be included based on its Repository URL and Asset Source
@@ -64,35 +81,8 @@ class SnykTargetMapper:
         asset_source = app.get('asset_source', '').lower().strip()
         repository_url = app.get('repository_url', '').lower().strip()
         
-        # Unified SCM pattern definitions - consistent for all SCM types
-        scm_patterns = {
-            # GitHub variants (all use same patterns)
-            'github': {
-                'url_patterns': ['github.com'],
-                'source_keywords': ['github']
-            },
-            'github-cloud-app': {
-                'url_patterns': ['github.com'],
-                'source_keywords': ['github']
-            },
-            'github-enterprise': {
-                'url_patterns': ['github.com', 'github.'],  # Handles enterprise domains
-                'source_keywords': ['github']
-            },
-            # GitLab (now checks both URL and source)
-            'gitlab': {
-                'url_patterns': ['gitlab.com', 'gitlab.'],  # Handles self-hosted GitLab
-                'source_keywords': ['gitlab']
-            },
-            # Azure DevOps (now checks both URL and source)
-            'azure-repos': {
-                'url_patterns': ['dev.azure.com', 'visualstudio.com'],  # TFS/VSTS legacy
-                'source_keywords': ['azure', 'devops']
-            }
-        }
-        
         # Get patterns for the specified source type
-        patterns = scm_patterns.get(source_type)
+        patterns = self.SCM_PATTERNS.get(source_type)
         if not patterns:
             return False
         
@@ -700,13 +690,17 @@ class SnykTargetMapper:
             max_workers
         )
     
-    def create_targets_json(self, csv_file_path: str, output_json_path: str, source_type: str, empty_org_only: bool = False, limit: Optional[int] = None, rows: Optional[str] = None, branch_override: Optional[str] = None, files_override: Optional[str] = None, exclusion_globs_override: Optional[str] = None, max_workers: Optional[int] = None, rate_limit: Optional[int] = None):
-        # Sanitize CSV path for safety (output path sanitized in safe_write_json)
-        csv_file_path = sanitize_input_path(csv_file_path)
-        self.logger.info(f"Sanitized CSV path: {csv_file_path}")
+    def create_targets_json(self, csv_file_path: str, output_json_path: str, source_type: str, 
+                           empty_org_only: bool = False, limit: Optional[int] = None, rows: Optional[str] = None, 
+                           branch_override: Optional[str] = None, files_override: Optional[str] = None, 
+                           exclusion_globs_override: Optional[str] = None, max_workers: Optional[int] = None, 
+                           rate_limit: Optional[int] = None):
         """
         Create import-targets.json file with proper org mapping
         """
+        # Sanitize CSV path for safety (output path sanitized in safe_write_json)
+        csv_file_path = sanitize_input_path(csv_file_path)
+        self.logger.info(f"Sanitized CSV path: {csv_file_path}")
         # Store source_type for use throughout the process
         self.source_type = source_type
         
@@ -883,7 +877,29 @@ class SnykTargetMapper:
             print(f"   {org_name}: {count} targets")
 
 
-def main():
+def validate_arguments(args, logger):
+    """Validate command line arguments and sanitize paths."""
+    # Sanitize input paths (output path sanitized in safe_write_json)
+    try:
+        args.csv_file = sanitize_input_path(args.csv_file)
+        args.orgs_json = sanitize_input_path(args.orgs_json)
+    except ValueError as ve:
+        log_error_and_exit(f"❌ Error: {ve}", logger)
+
+    validate_file_exists(args.csv_file, logger)
+    validate_positive_integer(args.limit, "--limit", logger)
+    validate_positive_integer(args.max_workers, "--max-workers", logger)
+    validate_positive_integer(args.rate_limit, "--rate-limit", logger)
+        
+    valid_sources = ['github', 'github-cloud-app', 'github-enterprise', 'gitlab', 'azure-repos']
+    if args.source not in valid_sources:
+        log_error_and_exit(f"❌ Error: Invalid source type '{args.source}'. Valid options: {', '.join(valid_sources)}", logger)
+        
+    validate_file_exists(args.orgs_json, logger)
+
+
+def create_argument_parser():
+    """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(
         description="Create Snyk import targets from CSV file (Phase 2)"
     )
@@ -907,6 +923,11 @@ def main():
     # Debugging options
     parser.add_argument('--debug', action='store_true', help='Enable detailed debug logging (API requests, responses, timing, and error traces)')
     
+    return parser
+
+
+def main():
+    parser = create_argument_parser()
     args = parser.parse_args()
 
     # Setup logging with debug support
@@ -914,24 +935,8 @@ def main():
     logger.info("=== Starting create_targets ===")
     logger.info(f"Command line arguments: {vars(args)}")
 
-    # Input validation
-    # Sanitize input paths (output path sanitized in safe_write_json)
-    try:
-        args.csv_file = sanitize_input_path(args.csv_file)
-        args.orgs_json = sanitize_input_path(args.orgs_json)
-    except ValueError as ve:
-        log_error_and_exit(f"❌ Error: {ve}", logger)
-
-    validate_file_exists(args.csv_file, logger)
-    validate_positive_integer(args.limit, "--limit", logger)
-    validate_positive_integer(args.max_workers, "--max-workers", logger)
-    validate_positive_integer(args.rate_limit, "--rate-limit", logger)
-        
-    valid_sources = ['github', 'github-cloud-app', 'github-enterprise', 'gitlab', 'azure-repos']
-    if args.source not in valid_sources:
-        log_error_and_exit(f"❌ Error: Invalid source type '{args.source}'. Valid options: {', '.join(valid_sources)}", logger)
-        
-    validate_file_exists(args.orgs_json, logger)
+    # Validate arguments
+    validate_arguments(args, logger)
 
     source_type = args.source
     message = f"Using integration type: {source_type}"
@@ -948,7 +953,7 @@ def main():
         except ValueError as ve:
             log_error_and_exit(f"❌ Error: {ve}", logger)
     
-    mapper = SnykTargetMapper(args.group_id, args.orgs_json)
+    mapper = SnykTargetMapper(args.group_id, args.orgs_json, debug=args.debug)
     
     message = f"Creating targets file: {output_path}"
     print(message)
