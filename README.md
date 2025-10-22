@@ -222,11 +222,13 @@ Your CSV should include these columns:
 
 The script uses the `Asset Source` column to filter repositories by integration type:
 
-| Integration Type | Matches Asset Source Keywords |
-|------------------|-------------------------------|
-| `github`         | "github"                     |
-| `gitlab`         | "gitlab"                     |
-| `azure-repos`    | "azure", "devops"           |
+| Integration Type    | Matches Asset Source Keywords |
+|---------------------|-------------------------------|
+| `github`            | "github"                     |
+| `github-cloud-app`  | "github"                     |
+| `github-enterprise` | "github"                     |
+| `gitlab`            | "gitlab"                     |
+| `azure-repos`       | "azure", "devops"           |
 
 
 ## 🤖 Auto-Detection Features
