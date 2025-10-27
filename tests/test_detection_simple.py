@@ -15,53 +15,52 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from create_targets import SnykTargetMapper
 
 
-class TestWorkflowDetection:
-    """Test workflow detection logic"""
+class TestApplicationFiltering:
+    """Test application filtering logic"""
     
-    def test_detect_workflow_type_gitlab(self):
-        """Test workflow detection identifies GitLab repositories"""
+    def test_should_include_application_gitlab(self):
+        """Test GitLab application filtering"""
         mapper = SnykTargetMapper("test-group-id")
         
-        applications = [
-            {'repository_url': 'https://github.com/user/repo1'},
-            {'repository_url': 'https://gitlab.com/user/repo2'},  # GitLab repo
-            {'repository_url': 'https://github.com/user/repo3'}
-        ]
+        # GitLab URL match
+        gitlab_app = {'repository_url': 'https://gitlab.com/user/repo', 'asset_source': 'other'}
+        assert mapper.should_include_application(gitlab_app, 'gitlab') == True
         
-        workflow = mapper.detect_workflow_type(applications)
-        assert workflow == 'gitlab'
+        # Non-GitLab should not match GitLab filter
+        github_app = {'repository_url': 'https://github.com/user/repo', 'asset_source': 'other'}
+        assert mapper.should_include_application(github_app, 'gitlab') == False
     
-    def test_detect_workflow_type_general(self):
-        """Test workflow detection defaults to general for non-GitLab"""
+    def test_should_include_application_github(self):
+        """Test GitHub application filtering"""
         mapper = SnykTargetMapper("test-group-id")
         
-        applications = [
-            {'repository_url': 'https://github.com/user/repo1'},
-            {'repository_url': 'https://dev.azure.com/org/project/_git/repo'}
-        ]
+        # GitHub URL match
+        github_app = {'repository_url': 'https://github.com/user/repo', 'asset_source': 'other'}
+        assert mapper.should_include_application(github_app, 'github') == True
         
-        workflow = mapper.detect_workflow_type(applications)
-        assert workflow == 'general'
+        # Non-GitHub should not match GitHub filter
+        gitlab_app = {'repository_url': 'https://gitlab.com/user/repo', 'asset_source': 'other'}
+        assert mapper.should_include_application(gitlab_app, 'github') == False
     
-    def test_detect_workflow_type_self_hosted_gitlab(self):
-        """Test workflow detection with self-hosted GitLab"""
+    def test_should_include_application_asset_source_match(self):
+        """Test asset source matching"""
         mapper = SnykTargetMapper("test-group-id")
         
-        applications = [
-            {'repository_url': 'https://gitlab.company.com/team/project'}
-        ]
+        # Asset source match for GitLab
+        app = {'repository_url': 'https://example.com/repo', 'asset_source': 'gitlab ci/cd'}
+        assert mapper.should_include_application(app, 'gitlab') == True
         
-        workflow = mapper.detect_workflow_type(applications)
-        assert workflow == 'gitlab'
+        # Asset source match for GitHub
+        app = {'repository_url': 'https://example.com/repo', 'asset_source': 'github actions'}
+        assert mapper.should_include_application(app, 'github') == True
     
-    def test_detect_workflow_type_empty_applications(self):
-        """Test workflow detection with empty applications list"""
+    def test_should_include_application_empty_values(self):
+        """Test filtering with empty/missing values"""
         mapper = SnykTargetMapper("test-group-id")
         
-        applications = []
-        
-        workflow = mapper.detect_workflow_type(applications)
-        assert workflow == 'general'
+        # Empty values should not match
+        app = {'repository_url': '', 'asset_source': ''}
+        assert mapper.should_include_application(app, 'github') == False
 
 
 class TestSourceFiltering:
@@ -127,9 +126,10 @@ class TestBranchDetectionLogic:
             # The actual API call would be mocked in integration tests
             try:
                 # This will likely return 'main' as fallback, but shouldn't crash
-                result = mapper.get_default_branch(url)
-                assert isinstance(result, str)
-                assert len(result) > 0
+                result = mapper.get_default_branch(url, 'github')
+                assert isinstance(result, (str, type(None)))
+                if result is not None:
+                    assert len(result) > 0
             except Exception as e:
                 # Should handle errors gracefully
                 assert False, f"URL processing failed for {url}: {e}"
@@ -137,9 +137,8 @@ class TestBranchDetectionLogic:
     def test_unsupported_source_fallback(self):
         """Test fallback behavior for unsupported source types"""
         mapper = SnykTargetMapper("test-group-id")
-        mapper.source_type = 'unsupported-scm'
         
-        branch = mapper.get_default_branch('https://unknown.scm/user/repo')
+        branch = mapper.get_default_branch('https://unknown.scm/user/repo', 'unknown')
         assert branch == 'main'  # Should fallback to main
 
 
@@ -149,18 +148,16 @@ class TestGitLabProjectLogic:
     def test_gitlab_project_info_non_gitlab_source(self):
         """Test GitLab project info when source is not GitLab"""
         mapper = SnykTargetMapper("test-group-id")
-        mapper.source_type = 'github'  # Not GitLab
         
-        project_info = mapper.get_gitlab_project_info('https://gitlab.com/user/project')
+        project_info = mapper.get_gitlab_project_info('https://gitlab.com/user/project', 'github')
         assert project_info is None
     
     def test_gitlab_project_info_gitlab_source(self):
         """Test GitLab project info when source is GitLab"""
         mapper = SnykTargetMapper("test-group-id")
-        mapper.source_type = 'gitlab'
         
         # This will likely return None due to no auth, but shouldn't crash
-        project_info = mapper.get_gitlab_project_info('https://gitlab.com/user/project')
+        project_info = mapper.get_gitlab_project_info('https://gitlab.com/user/project', 'gitlab')
         # Should return None or a dict, not crash
         assert project_info is None or isinstance(project_info, dict)
 

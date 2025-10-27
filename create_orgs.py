@@ -7,10 +7,11 @@ with organizations that need to be created in Snyk.
 
 from typing import Dict, List
 import argparse
+import json
 import sys
 from src.logging_utils import setup_logging
 from src.csv_utils import read_applications_from_csv
-from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_non_empty_string
+from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, safe_write_json_to_logs, build_output_path_in_logs, validate_file_exists, log_error_and_exit, validate_non_empty_string
 
 
 class SnykOrgCreator:
@@ -90,8 +91,15 @@ class SnykOrgCreator:
         
         orgs_json = {"orgs": orgs_to_create}
         
-        # Write to file with error handling
-        safe_write_json(orgs_json, output_json_path, self.logger)
+        # Write to file using secure function - handles all validation and error checking
+        if output_json_path.startswith('/') or ':' in output_json_path:
+            # Custom path provided - use safe_write_json for direct path writing
+            safe_write_json(orgs_json, output_json_path, self.logger)
+        else:
+            # Filename only - use safe_write_json_to_logs for SNYK_LOG_PATH directory
+            filename = os.path.basename(output_json_path)
+            safe_write_json_to_logs(orgs_json, filename, self.logger)
+        
         print(f"   Organizations to create: {len(orgs_to_create)}")
 
 
@@ -138,7 +146,9 @@ Examples:
     
     # Generate automatic filename if not provided
     if not args.output:
-        output_path = f"group-{args.group_id}-orgs.json"
+        # Use SNYK_LOG_PATH (required environment variable)
+        filename = f"group-{args.group_id}-orgs.json"
+        output_path = build_output_path_in_logs(filename, logger)
     else:
         # Sanitize output path for safety
         try:
@@ -158,12 +168,6 @@ Examples:
         success_msg = f"✅ Phase 1 complete! Use this file to create organizations in Snyk: {output_path}"
         print(f"\n{success_msg}")
         logger.info(success_msg)
-        
-        next_steps = f"📋 Next steps: 1. Use Snyk API Import Tool to create organizations from {output_path} 2. Then run: python create_targets.py --group-id {args.group_id} --csv-file {args.csv_file} --integration-type YOUR_INTEGRATION_TYPE"
-        print(f"\n📋 Next steps:")
-        print(f"   1. Use Snyk API Import Tool to create organizations from {output_path}")
-        print(f"   2. Then run: python create_targets.py --group-id {args.group_id} --csv-file {args.csv_file} --integration-type YOUR_INTEGRATION_TYPE")
-        logger.info(next_steps)
         logger.info("=== create_orgs.py completed successfully ===")
         
     except Exception as e:

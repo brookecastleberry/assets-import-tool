@@ -25,7 +25,8 @@ class TestSetupLogging:
         
         assert logger is not None
         assert logger.name == 'test_logger'
-        assert logger.level == logging.INFO
+        # When debug=False, level is set to CRITICAL+1 to disable logging
+        assert logger.level == logging.CRITICAL + 1
     
     def test_setup_logging_with_snyk_log_path(self):
         """Test logging setup with SNYK_LOG_PATH environment variable"""
@@ -53,11 +54,11 @@ class TestSetupLogging:
         """Test logging setup without SNYK_LOG_PATH (console only)"""
         with patch.dict(os.environ, {}, clear=True):
             with patch('builtins.print') as mock_print:
-                logger = setup_logging('test_logger')
+                logger = setup_logging('test_logger', debug=True)
                 
                 assert logger is not None
                 
-                # Should print warning about missing SNYK_LOG_PATH
+                # Should print warning about missing SNYK_LOG_PATH in debug mode
                 mock_print.assert_called()
                 printed_text = ' '.join([str(call[0][0]) for call in mock_print.call_args_list])
                 assert 'SNYK_LOG_PATH' in printed_text
@@ -93,14 +94,14 @@ class TestSetupLogging:
         """Test that logger is configured with correct level"""
         logger = setup_logging('level_test')
         
-        # Should be set to INFO level
-        assert logger.level == logging.INFO
+        # Should be set to CRITICAL+1 level (disabled) when debug=False
+        assert logger.level == logging.CRITICAL + 1
         
-        # Should log INFO messages
-        assert logger.isEnabledFor(logging.INFO)
+        # Should NOT log INFO messages (logging disabled)
+        assert not logger.isEnabledFor(logging.INFO)
         
-        # Should log ERROR messages  
-        assert logger.isEnabledFor(logging.ERROR)
+        # Should NOT log ERROR messages (logging disabled)
+        assert not logger.isEnabledFor(logging.ERROR)
         
         # Should NOT log DEBUG messages (below INFO)
         assert not logger.isEnabledFor(logging.DEBUG)
@@ -114,10 +115,10 @@ class TestSetupLogging:
         assert logger.name == special_name
     
     def test_logger_console_handler(self):
-        """Test that console handler is properly configured"""
-        logger = setup_logging('console_test')
+        """Test that console handler is properly configured in debug mode"""
+        logger = setup_logging('console_test', debug=True)
         
-        # Should have at least one handler
+        # Should have at least one handler in debug mode
         assert len(logger.handlers) >= 1
         
         # At least one handler should be a console/stream handler
@@ -126,6 +127,20 @@ class TestSetupLogging:
             for handler in logger.handlers
         )
         assert has_console_handler
+    
+    def test_logger_null_handler_no_debug(self):
+        """Test that null handler is used when debug=False"""
+        logger = setup_logging('null_test', debug=False)
+        
+        # Should have at least one handler
+        assert len(logger.handlers) >= 1
+        
+        # Should have a null handler when debug=False
+        has_null_handler = any(
+            isinstance(handler, logging.NullHandler) 
+            for handler in logger.handlers
+        )
+        assert has_null_handler
     
     @patch('logging_utils.os.makedirs')
     def test_log_directory_creation(self, mock_makedirs):

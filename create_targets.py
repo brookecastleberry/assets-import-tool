@@ -16,7 +16,7 @@ import threading
 from src.logging_utils import setup_logging, log_progress, log_error_with_context
 from src.csv_utils import read_applications_from_csv
 from src.api import rate_limit, get_auth_headers, display_auth_status, make_request_with_retry
-from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, validate_file_exists, log_error_and_exit, validate_positive_integer
+from src.file_utils import sanitize_path, sanitize_input_path, safe_write_json, safe_write_json_to_logs, build_output_path_in_logs, validate_file_exists, log_error_and_exit, validate_positive_integer
 
 # Disable SSL warnings for corporate networks/proxies
 import urllib3
@@ -861,8 +861,15 @@ class SnykTargetMapper:
         # Create final JSON structure
         targets_json = {"targets": targets}
         
-        # Write to file with error handling
-        safe_write_json(targets_json, output_json_path, self.logger)
+        # Write to file using secure function - handles all validation and error checking
+        if output_json_path.startswith('/') or ':' in output_json_path:
+            # Custom path provided - use safe_write_json for direct path writing
+            safe_write_json(targets_json, output_json_path, self.logger)
+        else:
+            # Filename only - use safe_write_json_to_logs for SNYK_LOG_PATH directory
+            filename = os.path.basename(output_json_path)
+            safe_write_json_to_logs(targets_json, filename, self.logger)
+        
         print(f"   Targets created: {len(targets)}")
         
         # Summary by organization
@@ -945,7 +952,9 @@ def main():
     
     # Generate automatic filename if not provided
     if not args.output:
-        output_path = "import-targets.json"
+        # Use SNYK_LOG_PATH
+        filename = "import-targets.json"
+        output_path = build_output_path_in_logs(filename, logger)
     else:
         # Sanitize output path for safety
         try:

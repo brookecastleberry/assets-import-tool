@@ -3,7 +3,7 @@ import time
 import requests
 import base64
 from typing import Dict, Optional
-from .logging_utils import log_api_request, log_api_response, log_retry_attempt, log_error_with_context
+from logging_utils import log_api_request, log_api_response, log_retry_attempt, log_error_with_context
 
 def rate_limit(request_lock, last_request_time, request_interval):
 	"""Apply rate limiting to API requests."""

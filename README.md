@@ -62,7 +62,9 @@ This tool creates the following files that are used by `snyk-api-import`:
 - `group-{GROUP_ID}-orgs.json` - Snyk organization structure (from `create_orgs.py`)
 - `import-targets.json` - Repository import targets (from `create_targets.py`)
 
-*Note: Both output filenames can be customized using the `--output` parameter.*
+**Output Location:**
+- Files are created in the `SNYK_LOG_PATH` directory (environment variable required)
+- Both output filenames and paths can be customized using the `--output` parameter
 
 ## 🚀 Quick Start
 
@@ -74,7 +76,7 @@ python create_orgs.py --group-id YOUR_GROUP_ID --source-org-id YOUR_SOURCE_ORG_I
 ```
 
 
-**Output**: `group-YOUR_GROUP_ID-orgs.json`
+**Output**: `$SNYK_LOG_PATH/group-YOUR_GROUP_ID-orgs.json`
 
 > **Note:** Organization data will only be generated for unique Application org names found in the CSV file. Duplicate Application names will be ignored for org creation.
 
@@ -82,37 +84,37 @@ python create_orgs.py --group-id YOUR_GROUP_ID --source-org-id YOUR_SOURCE_ORG_I
 
 ```bash
 # Use snyk-api-import to create the organizations in Snyk
-snyk-api-import orgs:create --file=group-YOUR_GROUP_ID-orgs.json
+snyk-api-import orgs:create --file=$SNYK_LOG_PATH/group-YOUR_GROUP_ID-orgs.json
 ```
 
-**Output**: `~/snyk-logs/snyk-created-orgs.json` (created by snyk-api-import)
+**Output**: `$SNYK_LOG_PATH/snyk-created-orgs.json` (created by snyk-api-import)
 
 ### Step 3: Generate Import Targets
 
 ```bash
 # Generate import targets with automatic SCM integration and boundary enforcement
-python create_targets.py --group-id YOUR_GROUP_ID --csv-file /path/to/all_assets.csv --orgs-json ~/snyk-logs/snyk-created-orgs.json --source github
+python create_targets.py --group-id YOUR_GROUP_ID --csv-file /path/to/all_assets.csv --orgs-json $SNYK_LOG_PATH/snyk-created-orgs.json --source github
 ```
 
-**Output**: `import-targets.json`
+**Output**: `$SNYK_LOG_PATH/import-targets.json`
 
 ### Step 4: Import Repositories
 
 ```bash
 # Use snyk-api-import to perform the actual repository imports
-snyk-api-import import --file=import-targets.json
+snyk-api-import import --file=$SNYK_LOG_PATH/import-targets.json
 
 # For debugging issues, use the debug version:
-DEBUG=*snyk* snyk-api-import import --file=import-targets.json
+DEBUG=*snyk* snyk-api-import import --file=$SNYK_LOG_PATH/import-targets.json
 ```
 
 ### **Custom Performance Tuning (Optional)**
 ```bash
 # Override auto-tuning if needed
-python create_targets_fixed.py \
+python create_targets.py \
   --group-id YOUR_GROUP_ID \
   --csv-file your-data.csv \
-  --orgs-json group-YOUR_GROUP_ID-orgs.json \
+  --orgs-json $SNYK_LOG_PATH/snyk-created-orgs.json \
   --source github \
   --max-workers 25 \
   --rate-limit 30
@@ -128,7 +130,7 @@ python create_targets_fixed.py \
 
 **Optional Flags:**
 - `--source-org-id` - Source organization ID to copy settings from (recommended for consistent configuration)
-- `--output` - Custom output file path (default: `group-{GROUP_ID}-orgs.json`)
+- `--output` - Custom output file path (default: `$SNYK_LOG_PATH/group-{GROUP_ID}-orgs.json`)
 - `--debug` - Enable detailed debug logging
 
 **Example:**
@@ -147,7 +149,7 @@ python create_orgs.py --group-id abc123 --source-org-id def456 --csv-file /path/
 **Optional Flags:**
 
 *Output & Filtering:*
-- `--output` - Custom output file path (default: `import-targets.json`)
+- `--output` - Custom output file path (default: `$SNYK_LOG_PATH/import-targets.json`)
 - `--empty-org-only` - Only process repositories where Organizations column is "N/A" (repositories not yet imported to Snyk)
 - `--limit` - Maximum number of repository targets to process (useful for batching)
 - `--rows` - Specify CSV row numbers to process (e.g., `--rows 2,5-8,10` for rows 2, 5-8, and 10)
@@ -179,7 +181,7 @@ When multiple filtering flags are used together, they are applied in this specif
 
 **Example:**
 ```bash
-python create_targets.py --group-id abc123 --csv-file /path/to/all_assets.csv --orgs-json ~/snyk-logs/snyk-created-orgs.json   --source github --branch main --files "package.json" --exclusion-globs "test,spec" --max-workers 20 --rate-limit 100 --debug
+python create_targets.py --group-id abc123 --csv-file /path/to/all_assets.csv --orgs-json $SNYK_LOG_PATH/snyk-created-orgs.json --source github --branch main --files "package.json" --exclusion-globs "test,spec" --max-workers 20 --rate-limit 100 --debug
 ```
 
 ## 🔍 Debug Logging
