@@ -91,14 +91,34 @@ class SnykOrgCreator:
         
         orgs_json = {"orgs": orgs_to_create}
         
-        # Write to file using secure function - handles all validation and error checking
-        if output_json_path.startswith('/') or ':' in output_json_path:
-            # Custom path provided - use safe_write_json for direct path writing
-            safe_write_json(orgs_json, output_json_path, self.logger)
-        else:
-            # Filename only - use safe_write_json_to_logs for SNYK_LOG_PATH directory
-            filename = os.path.basename(output_json_path)
-            safe_write_json_to_logs(orgs_json, filename, self.logger)
+        # Write to file - path is already validated by build_output_path_in_logs or sanitize_path
+        try:
+            with open(output_json_path, 'w') as f:
+                json.dump(orgs_json, f, indent=2)
+            
+            success_msg = f"📄 Created file: {output_json_path}"
+            print(success_msg)
+            if self.logger:
+                self.logger.info(success_msg)
+                
+        except PermissionError:
+            error_msg = f"❌ Error: Permission denied writing to {output_json_path}"
+            print(error_msg)
+            if self.logger:
+                self.logger.error(error_msg)
+            sys.exit(1)
+        except OSError as e:
+            error_msg = f"❌ Error: Failed to write file {output_json_path}: {e}"
+            print(error_msg)
+            if self.logger:
+                self.logger.error(error_msg)
+            sys.exit(1)
+        except Exception as e:
+            error_msg = f"❌ Error: Unexpected error writing file {output_json_path}: {e}"
+            print(error_msg)
+            if self.logger:
+                self.logger.error(error_msg)
+            sys.exit(1)
         
         print(f"   Organizations to create: {len(orgs_to_create)}")
 
