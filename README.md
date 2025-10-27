@@ -202,9 +202,8 @@ The tool automatically respects SCM platform rate limits:
 
 ### Auto-Tuning
 
-**Concurrent Workers:** Automatically scales based on repository count (10-50 workers)
-
-**Rate Limiting:** Automatically adjusted by SCM type to prevent API throttling
+**Concurrent Workers:** Automatically scales based on repository count:
+- ≤100 repos: 10 workers | ≤500 repos: 20 workers | ≤2000 repos: 30 workers | ≤5000 repos: 40 workers | >5000 repos: 50 workers
 
 
 ## 📋 CSV File Format

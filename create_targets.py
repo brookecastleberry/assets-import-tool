@@ -6,6 +6,7 @@ and automatically detecting the appropriate integration types.
 """
 
 import json
+import os
 from typing import Dict, List, Optional
 import argparse
 import sys
@@ -976,9 +977,15 @@ def main():
         filename = "import-targets.json"
         output_path = build_output_path_in_logs(filename, logger)
     else:
-        # Sanitize output path for safety
+        # Handle user-provided output path
         try:
-            output_path = sanitize_path(args.output)
+            # Check if it's a directory path or filename
+            if os.path.isdir(args.output):
+                # User provided a directory - create default filename in that directory
+                output_path = os.path.join(args.output, "import-targets.json")
+            else:
+                # User provided a full filename - use as-is (but validate it's safe)
+                output_path = sanitize_input_path(args.output)
         except ValueError as ve:
             log_error_and_exit(f"❌ Error: {ve}", logger)
     
