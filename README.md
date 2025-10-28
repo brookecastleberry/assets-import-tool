@@ -8,6 +8,8 @@ A comprehensive tool for importing repositories from various SCM platforms into 
 
 This tool provides a complete workflow for importing repositories into Snyk while maintaining organizational boundaries based on your application structure. It integrates with [`snyk-api-import`](https://github.com/snyk/snyk-api-import) to provide enterprise-scale import capabilities with enhanced authentication and filtering.
 
+**This repository is closed to public contributions.**
+
 ## 🏗️ Architecture
 
 The import process follows a 4-step workflow:
