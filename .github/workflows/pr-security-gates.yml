@@ -1,0 +1,65 @@
+name: PR Security Quality Gates
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  security-quality-gates:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+          
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Install Snyk CLI
+      uses: snyk/actions/setup@master
+      
+    - name: Authenticate Snyk
+      run: snyk auth ${{ secrets.SNYK_TOKEN }}
+      
+    - name: Run Snyk SCA Quality Gate
+      id: snyk-sca
+      run: |
+        echo "Running SCA scan with quality gate: 0 high or critical severity issues"
+        snyk test --severity-threshold=high --fail-on=all
+      continue-on-error: false
+      
+    - name: Run Snyk SAST Quality Gate
+      id: snyk-sast
+      run: |
+        echo "Running SAST scan with quality gate: 0 high severity issues"
+        snyk code test --severity-threshold=high --fail-on=all
+      continue-on-error: false
+      
+    - name: Quality Gate Summary
+      if: always()
+      run: |
+        echo "## 🔒 Security Quality Gate Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.snyk-sca.outcome }}" == "success" ]; then
+          echo "✅ **SCA Quality Gate**: PASSED (0 high/critical issues)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **SCA Quality Gate**: FAILED (high/critical issues found)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ steps.snyk-sast.outcome }}" == "success" ]; then
+          echo "✅ **SAST Quality Gate**: PASSED (0 high issues)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **SAST Quality Gate**: FAILED (high issues found)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "All quality gates must pass before this PR can be merged." >> $GITHUB_STEP_SUMMARY
