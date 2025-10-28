@@ -1,12 +1,12 @@
-name: Snyk Security Scan
+name: Snyk Security Quality Gates
 
 on:
-  push:
+  pull_request:
     branches: [ main, develop ]
-  workflow_dispatch:
+    types: [opened, synchronize, reopened]
 
 jobs:
-  snyk-security:
+  security-quality-gates:
     runs-on: ubuntu-latest
     
     steps:
@@ -30,9 +30,17 @@ jobs:
       run: snyk auth ${{ secrets.SNYK_TOKEN }}
       
     - name: Run Snyk Code Test (SAST)
-      run: snyk code test
-      continue-on-error: true
+      run: snyk code test --severity-threshold=high --fail-on=all
       
     - name: Run Snyk SCA Test
-      run: snyk test
-      continue-on-error: true
+      run: snyk test --severity-threshold=high --fail-on=all
+      
+    - name: Quality Gate Summary
+      if: always()
+      run: |
+        echo "## 🚦 Security Quality Gates" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**SCA Quality Gate:** 0 high/critical severity issues" >> $GITHUB_STEP_SUMMARY
+        echo "**SAST Quality Gate:** 0 high severity issues" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "All quality gates must pass before this PR can be merged." >> $GITHUB_STEP_SUMMARY
